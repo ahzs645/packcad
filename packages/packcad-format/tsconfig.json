@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "../../node_modules/.tmp/packcad-format-types",
+    "rootDir": "src",
+    "tsBuildInfoFile": "../../node_modules/.tmp/packcad-format.tsbuildinfo"
+  },
+  "include": ["src"]
+}

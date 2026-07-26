@@ -1,0 +1,14 @@
+{
+  "name": "@packcad/format",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@atelier/geometry": "file:../../../atelier/packages/geometry",
+    "@atelier/io": "file:../../../atelier/packages/io"
+  }
+}

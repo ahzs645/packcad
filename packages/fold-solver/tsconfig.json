@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "../../node_modules/.tmp/fold-solver-types",
+    "rootDir": "src",
+    "tsBuildInfoFile": "../../node_modules/.tmp/fold-solver.tsbuildinfo",
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.json"]
+}

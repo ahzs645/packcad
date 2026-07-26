@@ -1,0 +1,39 @@
+{
+  "name": "packcad",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc -b --pretty",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@atelier/core": "file:../atelier/packages/core",
+    "@atelier/geometry": "file:../atelier/packages/geometry",
+    "@atelier/viewport": "file:../atelier/packages/viewport",
+    "@atelier/io": "file:../atelier/packages/io",
+    "@atelier/react": "file:../atelier/packages/react",
+    "@packcad/fold-solver": "workspace:*",
+    "@packcad/format": "workspace:*",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "three": "0.181.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.184.1",
+    "@vitejs/plugin-react": "6.0.4",
+    "eslint": "9.39.5",
+    "globals": "14.0.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}

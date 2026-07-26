@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/packcad-format" },
+    { "path": "./packages/fold-solver" },
+    { "path": "./tsconfig.app.json" }
+  ]
+}
