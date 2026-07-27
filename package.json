@@ -13,11 +13,11 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@atelier/core": "file:../atelier/packages/core",
-    "@atelier/geometry": "file:../atelier/packages/geometry",
-    "@atelier/viewport": "file:../atelier/packages/viewport",
-    "@atelier/io": "file:../atelier/packages/io",
-    "@atelier/react": "file:../atelier/packages/react",
+    "@atelier/core": "link:../atelier/packages/core",
+    "@atelier/geometry": "link:../atelier/packages/geometry",
+    "@atelier/viewport": "link:../atelier/packages/viewport",
+    "@atelier/io": "link:../atelier/packages/io",
+    "@atelier/react": "link:../atelier/packages/react",
     "@packcad/fold-solver": "workspace:*",
     "@packcad/format": "workspace:*",
     "react": "19.2.8",

@@ -9,20 +9,20 @@ importers:
   .:
     dependencies:
       '@atelier/core':
-        specifier: file:../atelier/packages/core
-        version: file:../atelier/packages/core
+        specifier: link:../atelier/packages/core
+        version: link:../atelier/packages/core
       '@atelier/geometry':
-        specifier: file:../atelier/packages/geometry
-        version: file:../atelier/packages/geometry
+        specifier: link:../atelier/packages/geometry
+        version: link:../atelier/packages/geometry
       '@atelier/io':
-        specifier: file:../atelier/packages/io
-        version: file:../atelier/packages/io(three@0.181.2)
+        specifier: link:../atelier/packages/io
+        version: link:../atelier/packages/io
       '@atelier/react':
-        specifier: file:../atelier/packages/react
-        version: file:../atelier/packages/react(react@19.2.8)(three@0.181.2)
+        specifier: link:../atelier/packages/react
+        version: link:../atelier/packages/react
       '@atelier/viewport':
-        specifier: file:../atelier/packages/viewport
-        version: file:../atelier/packages/viewport(three@0.181.2)
+        specifier: link:../atelier/packages/viewport
+        version: link:../atelier/packages/viewport
       '@packcad/fold-solver':
         specifier: workspace:*
         version: link:packages/fold-solver
@@ -108,16 +108,6 @@ packages:
 
   '@atelier/io@file:../atelier/packages/io':
     resolution: {directory: ../atelier/packages/io, type: directory}
-    peerDependencies:
-      three: '>=0.170.0'
-
-  '@atelier/react@file:../atelier/packages/react':
-    resolution: {directory: ../atelier/packages/react, type: directory}
-    peerDependencies:
-      react: '>=19 <20'
-
-  '@atelier/viewport@file:../atelier/packages/viewport':
-    resolution: {directory: ../atelier/packages/viewport, type: directory}
     peerDependencies:
       three: '>=0.170.0'
 
@@ -1084,20 +1074,6 @@ snapshots:
       delaunator: 5.1.0
 
   '@atelier/io@file:../atelier/packages/io(three@0.181.2)':
-    dependencies:
-      '@atelier/core': file:../atelier/packages/core
-      '@atelier/geometry': file:../atelier/packages/geometry
-      three: 0.181.2
-
-  '@atelier/react@file:../atelier/packages/react(react@19.2.8)(three@0.181.2)':
-    dependencies:
-      '@atelier/core': file:../atelier/packages/core
-      '@atelier/viewport': file:../atelier/packages/viewport(three@0.181.2)
-      react: 19.2.8
-    transitivePeerDependencies:
-      - three
-
-  '@atelier/viewport@file:../atelier/packages/viewport(three@0.181.2)':
     dependencies:
       '@atelier/core': file:../atelier/packages/core
       '@atelier/geometry': file:../atelier/packages/geometry
