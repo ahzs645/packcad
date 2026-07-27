@@ -11,7 +11,7 @@ import { useEditor } from "@atelier/react";
 import { createMailerBoxProject } from "@packcad/fold-solver";
 import type { PackagingProject } from "@packcad/format";
 import type { Object3D } from "three";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Inspector } from "./components/Inspector";
 import { MaterialPanel } from "./components/MaterialPanel";
 import { OperationPipelinePanel } from "./components/OperationPipelinePanel";
@@ -19,18 +19,23 @@ import { Toolbar } from "./components/Toolbar";
 import { ViewportPane } from "./components/ViewportPane";
 import { createCommandRegistry } from "./model/commands";
 import { foldModelToDrawing } from "./model/drawing";
+import type { FoldDiagnostics } from "./render/foldSettlement";
+
+// App owns one document for the lifetime of the SPA. Keeping the Editor at module
+// scope avoids React Strict Mode's development-only effect rehearsal disposing a
+// still-live Editor before the first user command.
+const editor = new Editor<PackagingProject>(
+  createDoc(createMailerBoxProject(), { name: "Mailer Box" }),
+  { registry: createCommandRegistry(), history: { limit: 100 } },
+);
 
 export default function App() {
-  const editor = useMemo(
-    () => new Editor<PackagingProject>(
-      createDoc(createMailerBoxProject(), { name: "Mailer Box" }),
-      { registry: createCommandRegistry(), history: { limit: 100 } },
-    ),
-    [],
-  );
   const state = useEditor(editor);
   const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null);
   const [sceneObject, setSceneObject] = useState<Object3D | null>(null);
+  const [foldDiagnostics, setFoldDiagnostics] = useState<FoldDiagnostics>({
+    status: "settling",
+  });
   const handleSceneObject = useCallback((object: Object3D | null): void => {
     setSceneObject(object);
   }, []);
@@ -46,8 +51,6 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [editor]);
 
-  useEffect(() => () => editor.dispose(), [editor]);
-
   const exportProject = useCallback(async (
     format: "svg" | "gltf" | "dxf" | "hpgl" | "pdf" | "png",
   ): Promise<void> => {
@@ -55,7 +58,11 @@ export default function App() {
     if (!model) return;
     if (format === "gltf") {
       if (!sceneObject) return;
-      const gltf = await toGLTF(sceneObject);
+      // Crease guides are LineSegments and have no glTF PBR material analogue;
+      // the deliverable is the closed package shell, not viewport-only guides.
+      const exportObject = sceneObject.children.find((child) => child.type === "Mesh")
+        ?? sceneObject;
+      const gltf = await toGLTF(exportObject);
       if (gltf instanceof ArrayBuffer) {
         downloadBlob("mailer-box.glb", new Blob([gltf], { type: "model/gltf-binary" }));
       } else {
@@ -107,10 +114,12 @@ export default function App() {
           selectedFaceIndex={selectedFaceIndex}
           onSelectFace={setSelectedFaceIndex}
           onSceneObject={handleSceneObject}
+          onFoldDiagnostics={setFoldDiagnostics}
         />
         <Inspector
           project={state.content}
           selectedFaceIndex={selectedFaceIndex}
+          foldDiagnostics={foldDiagnostics}
           onSelectStep={(stepId) => state.execute("fold.selectStep", { stepId })}
           onSetAngle={(angle) => state.execute("fold.setAngle", { angle })}
           onSetThickness={(thicknessMm) =>

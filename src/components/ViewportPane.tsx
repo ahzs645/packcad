@@ -14,13 +14,26 @@ import type { PickHit, Viewport } from "@atelier/viewport";
 import type { PackagingProject } from "@packcad/format";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildFoldScene, type FoldSceneData } from "../render/foldSceneBuilder";
+import type {
+  CachedFoldSettlement,
+  FoldDiagnostics,
+  FoldSettlementRequest,
+  FoldSettlementResponse,
+} from "../render/foldSettlement";
 
 interface ViewportPaneProps {
   project: PackagingProject;
   selectedFaceIndex: number | null;
   onSelectFace: (faceIndex: number | null) => void;
   onSceneObject: (object: Object3D | null) => void;
+  onFoldDiagnostics: (diagnostics: FoldDiagnostics) => void;
 }
+
+type ActiveSettlement = {
+  model: NonNullable<PackagingProject["foldModel"]>;
+  cacheKey: string;
+  data: CachedFoldSettlement;
+};
 
 function disposeSceneData(data: FoldSceneData): void {
   data.geometry.dispose();
@@ -36,15 +49,124 @@ export function ViewportPane({
   selectedFaceIndex,
   onSelectFace,
   onSceneObject,
+  onFoldDiagnostics,
 }: ViewportPaneProps) {
   const [viewport, setViewport] = useState<Viewport | null>(null);
+  const [settlement, setSettlement] = useState<ActiveSettlement | null>(null);
   const sceneDataRef = useRef<FoldSceneData | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const pendingRef = useRef(new Map<number, {
+    model: NonNullable<PackagingProject["foldModel"]>;
+    cacheKey: string;
+  }>());
+  const cacheRef = useRef(
+    new WeakMap<NonNullable<PackagingProject["foldModel"]>, Map<string, CachedFoldSettlement>>(),
+  );
   const onSelectFaceRef = useRef(onSelectFace);
   onSelectFaceRef.current = onSelectFace;
 
   const handleReady = useCallback((readyViewport: Viewport): void => {
     setViewport(readyViewport);
   }, []);
+
+  useEffect(() => {
+    const worker = new Worker(
+      new URL("../render/foldSettleWorker.ts", import.meta.url),
+      { type: "module" },
+    );
+    workerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<FoldSettlementResponse>): void => {
+      const response = event.data;
+      const pending = pendingRef.current.get(response.requestId);
+      pendingRef.current.delete(response.requestId);
+      if (!pending || response.requestId !== requestIdRef.current) return;
+      if (!response.ok) {
+        setSettlement(null);
+        onFoldDiagnostics({ status: "error", message: response.message });
+        return;
+      }
+      const next: CachedFoldSettlement = {
+        positions: response.positions,
+        maxEdgeError: response.maxEdgeError,
+        maxAngleErrorDeg: response.maxAngleErrorDeg,
+        converged: response.converged,
+      };
+      const modelCache = cacheRef.current.get(pending.model) ?? new Map();
+      modelCache.set(pending.cacheKey, next);
+      cacheRef.current.set(pending.model, modelCache);
+      setSettlement({
+        model: pending.model,
+        cacheKey: pending.cacheKey,
+        data: next,
+      });
+      onFoldDiagnostics({
+        status: "settled",
+        maxEdgeError: next.maxEdgeError,
+        maxAngleErrorDeg: next.maxAngleErrorDeg,
+        converged: next.converged,
+      });
+    };
+    worker.onerror = (): void => {
+      setSettlement(null);
+      onFoldDiagnostics({
+        status: "error",
+        message: "The settled fold solver failed.",
+      });
+    };
+    return () => {
+      workerRef.current = null;
+      worker.terminate();
+    };
+  }, [onFoldDiagnostics]);
+
+  const model = project.foldModel;
+  const foldStepIndex = Math.max(
+    0,
+    project.foldingSteps.findIndex((step) => step.id === project.activeStepId),
+  );
+  const activeStep = project.foldingSteps[foldStepIndex];
+  const foldAngle = activeStep?.angle ?? 0;
+  const settlementKey = `${foldStepIndex}:${foldAngle}`;
+  const activeSettlement =
+    settlement && settlement.model === model && settlement.cacheKey === settlementKey
+      ? settlement.data
+      : null;
+
+  useEffect(() => {
+    if (!model) {
+      setSettlement(null);
+      return;
+    }
+    const cacheKey = settlementKey;
+    const cached = cacheRef.current.get(model)?.get(cacheKey);
+    if (cached) {
+      setSettlement({ model, cacheKey, data: cached });
+      onFoldDiagnostics({
+        status: "settled",
+        maxEdgeError: cached.maxEdgeError,
+        maxAngleErrorDeg: cached.maxAngleErrorDeg,
+        converged: cached.converged,
+      });
+      return;
+    }
+
+    setSettlement(null);
+    onFoldDiagnostics({ status: "settling" });
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const timer = window.setTimeout(() => {
+      const request: FoldSettlementRequest = {
+        requestId,
+        model,
+        foldStepIndex,
+        foldAngle,
+      };
+      pendingRef.current.set(requestId, { model, cacheKey });
+      workerRef.current?.postMessage(request);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [foldAngle, foldStepIndex, model, onFoldDiagnostics, settlementKey]);
 
   useEffect(() => {
     if (!viewport) return;
@@ -61,25 +183,22 @@ export function ViewportPane({
   }, [viewport]);
 
   useEffect(() => {
-    if (!viewport || !project.foldModel) {
+    if (!viewport || !model) {
       onSceneObject(null);
       return;
     }
-    const model = project.foldModel;
-    const foldStepIndex = Math.max(
-      0,
-      project.foldingSteps.findIndex((step) => step.id === project.activeStepId),
-    );
-    const activeStep = project.foldingSteps[foldStepIndex];
     const data = buildFoldScene({
       model,
       projection: project.viewMode === "2d" ? "flat-2d" : "folded-3d",
       foldStepIndex,
-      foldAngle: activeStep?.angle ?? 0,
+      foldAngle,
       thicknessMm: project.thicknessMm,
       panelColorMode: "material",
       edgeColorMode: "mountain-valley",
       selectedFaceIndex,
+      foldPositions: activeSettlement?.positions,
+      foldMaxEdgeError: activeSettlement?.maxEdgeError,
+      foldMaxAngleErrorDeg: activeSettlement?.maxAngleErrorDeg,
     });
     sceneDataRef.current = data;
 
@@ -142,7 +261,7 @@ export function ViewportPane({
       sceneDataRef.current = null;
       viewport.invalidate();
     };
-  }, [onSceneObject, project, selectedFaceIndex, viewport]);
+  }, [activeSettlement, foldAngle, foldStepIndex, model, onSceneObject, project, selectedFaceIndex, viewport]);
 
   return (
     <section className="viewport-pane" aria-label="Package viewport">

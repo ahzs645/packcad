@@ -1,8 +1,10 @@
 import type { PackagingProject } from "@packcad/format";
+import type { FoldDiagnostics } from "../render/foldSettlement";
 
 interface InspectorProps {
   project: PackagingProject;
   selectedFaceIndex: number | null;
+  foldDiagnostics: FoldDiagnostics;
   onSelectStep: (stepId: string) => void;
   onSetAngle: (angle: number) => void;
   onSetThickness: (thicknessMm: number) => void;
@@ -11,6 +13,7 @@ interface InspectorProps {
 export function Inspector({
   project,
   selectedFaceIndex,
+  foldDiagnostics,
   onSelectStep,
   onSetAngle,
   onSetThickness,
@@ -53,6 +56,26 @@ export function Inspector({
           onChange={(event) => onSetThickness(event.currentTarget.valueAsNumber)}
         />
       </label>
+      <div className="selection-card solver-card" aria-live="polite">
+        <span>Settled solve</span>
+        {foldDiagnostics.status === "settling" ? (
+          <strong>Settling…</strong>
+        ) : foldDiagnostics.status === "error" ? (
+          <>
+            <strong>Invalid fold</strong>
+            <p>{foldDiagnostics.message}</p>
+          </>
+        ) : (
+          <>
+            <strong>{foldDiagnostics.converged ? "Converged" : "Non-converging"}</strong>
+            <p>
+              Edge error {foldDiagnostics.maxEdgeError.toExponential(2)}
+              <br />
+              Angle error {foldDiagnostics.maxAngleErrorDeg.toExponential(2)}°
+            </p>
+          </>
+        )}
+      </div>
       <div className="selection-card">
         <span>Picked face</span>
         <strong>{selectedFaceIndex === null ? "None" : `Face ${selectedFaceIndex + 1}`}</strong>
