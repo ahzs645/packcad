@@ -12,14 +12,15 @@ describe("MailerBox Newton fold golden", () => {
       position.map((coordinate) => Number(coordinate.toFixed(8))),
     );
 
+    // Convergence metrics vary in the trailing float digits across platforms
+    // (macOS vs Linux libm), so they get tolerance checks, not exact snapshots.
+    expect(result.maxEdgeError).toBeLessThan(1e-6);
+    expect(result.maxAngleErrorDeg).toBeLessThan(1e-4);
+
     expect({
       positions,
-      maxEdgeError: result.maxEdgeError,
-      maxAngleErrorDeg: result.maxAngleErrorDeg,
     }).toMatchInlineSnapshot(`
       {
-        "maxAngleErrorDeg": 0.000005204858961581021,
-        "maxEdgeError": 5.073250553591979e-8,
         "positions": [
           [
             469.50000493,
