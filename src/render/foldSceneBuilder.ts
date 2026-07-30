@@ -61,6 +61,51 @@ export type FoldSceneInput = {
   foldMaxAngleErrorDeg?: number;
 };
 
+export type FoldScenePositionInput = Pick<
+  FoldSceneInput,
+  | "foldStepIndex"
+  | "foldAngle"
+  | "foldPositions"
+  | "foldMaxEdgeError"
+  | "foldMaxAngleErrorDeg"
+>;
+
+type FoldVertexPositionRecipe =
+  | {
+      kind: "face";
+      vertexIndex: number;
+      faceIndex: number;
+      normalOffset: number;
+    }
+  | {
+      kind: "miter";
+      vertexIndex: number;
+      faceAIndex: number;
+      faceBIndex: number;
+      normalOffset: number;
+    };
+
+type FoldEdgePositionLayout = {
+  edgeIndex: number;
+  faceIndices: number[];
+  frontAIndices: number[];
+  frontBIndices: number[];
+  pickPositionOffset: number;
+  solidPositionOffset?: number;
+  dashedPositionOffset?: number;
+  dashedDistanceOffset?: number;
+};
+
+type FoldScenePositionLayout = {
+  model: FoldModel;
+  projection: FoldProjection;
+  frame: ReturnType<typeof foldSceneFrame>;
+  meshRecipes: FoldVertexPositionRecipe[];
+  lockedTintRecipes: FoldVertexPositionRecipe[];
+  selectedTintRecipes: FoldVertexPositionRecipe[];
+  edgeLayouts: FoldEdgePositionLayout[];
+};
+
 export type FoldSceneMeta = {
   edgeIndexCount: number;
   cutEdgeIndexCount: number;
@@ -95,6 +140,8 @@ export type FoldSceneData = {
   bounds: { min: V3; max: V3 };
   frameScale: number;
   meta: FoldSceneMeta;
+  /** Cached topology-to-source mapping used by updateFoldScenePositions. */
+  positionLayout: FoldScenePositionLayout;
 };
 
 function hingeMiterPoint(
@@ -227,6 +274,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   const { front: fOff, back: bOff } = offsetExtents(visualThickness, direction);
 
   const positions: number[] = [];
+  const meshRecipes: FoldVertexPositionRecipe[] = [];
   const uvs: number[] = [];
   const colors: number[] = [];
   const frontIndices: number[] = [];
@@ -237,8 +285,14 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   let next = 0;
   const white = new Color("#ffffff");
   const faceColors = model.facesVertices.map((_, index) => new Color(panelColorForIndex(index)));
-  const pushVert = (p: V3, uv: readonly [number, number], color = white): number => {
+  const pushVert = (
+    p: V3,
+    uv: readonly [number, number],
+    recipe: FoldVertexPositionRecipe,
+    color = white,
+  ): number => {
     positions.push(p[0], p[1], p[2]);
+    meshRecipes.push(recipe);
     uvs.push(uv[0], uv[1]);
     colors.push(color.r, color.g, color.b);
     return next++;
@@ -290,8 +344,18 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     const back = new Map<number, number>();
     for (const vi of loop) {
       const base = scenePositions[vi] as V3;
-      front.set(vi, pushVert(v3add(base, v3scale(nrm, fOff)), uvOf(vi), faceColor));
-      back.set(vi, pushVert(v3add(base, v3scale(nrm, bOff)), uvOf(vi), faceColor));
+      front.set(vi, pushVert(
+        v3add(base, v3scale(nrm, fOff)),
+        uvOf(vi),
+        { kind: "face", vertexIndex: vi, faceIndex, normalOffset: fOff },
+        faceColor,
+      ));
+      back.set(vi, pushVert(
+        v3add(base, v3scale(nrm, bOff)),
+        uvOf(vi),
+        { kind: "face", vertexIndex: vi, faceIndex, normalOffset: bOff },
+        faceColor,
+      ));
     }
     const rawTris = triangulateFace(loop, model.verticesCoords);
     // Reverse winding when the face was flipped outward so FrontSide faces out.
@@ -313,31 +377,50 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   const edgeVertexStart = next;
   let interiorFoldHingeCount = 0;
   let foldHingeCapIndexCount = 0;
-  const addEdgeQuad = (pVa: V3, pVb: V3, cVb: V3, cVa: V3, v0 = 0, v1 = 1) => {
-    const u1 = Math.max(1, v3len(v3sub(pVb, pVa)) * EDGE_UV_REPEAT_PER_SCENE_UNIT);
-    const a = pushVert(pVa, [0, v0]);
-    const b = pushVert(pVb, [u1, v0]);
-    const c = pushVert(cVb, [u1, v1]);
-    const d = pushVert(cVa, [0, v1]);
+  type DynamicPoint = {
+    position: V3;
+    recipe: FoldVertexPositionRecipe;
+  };
+  const dynamicPointAt = (index: number): DynamicPoint => ({
+    position: positionAt(index),
+    recipe: meshRecipes[index],
+  });
+  const addEdgeQuad = (
+    pVa: DynamicPoint,
+    pVb: DynamicPoint,
+    cVb: DynamicPoint,
+    cVa: DynamicPoint,
+    v0 = 0,
+    v1 = 1,
+  ) => {
+    const u1 = Math.max(
+      1,
+      v3len(v3sub(pVb.position, pVa.position)) * EDGE_UV_REPEAT_PER_SCENE_UNIT,
+    );
+    const a = pushVert(pVa.position, [0, v0], pVa.recipe);
+    const b = pushVert(pVb.position, [u1, v0], pVb.recipe);
+    const c = pushVert(cVb.position, [u1, v1], cVb.recipe);
+    const d = pushVert(cVa.position, [0, v1], cVa.recipe);
     edgeIndices.push(a, b, c, a, c, d);
   };
   const addHingeQuad = (
     target: number[],
-    pVa: V3,
-    pVb: V3,
-    cVb: V3,
-    cVa: V3,
+    pVa: DynamicPoint,
+    pVb: DynamicPoint,
+    cVb: DynamicPoint,
+    cVa: DynamicPoint,
     uvA: [number, number],
     uvB: [number, number],
     outward: V3,
   ) => {
-    const separated = Math.max(v3len(v3sub(pVa, cVa)), v3len(v3sub(pVb, cVb))) > 1e-6;
-    if (!separated) return;
-    const a = pushVert(pVa, uvA);
-    const b = pushVert(pVb, uvB);
-    const c = pushVert(cVb, uvB);
-    const d = pushVert(cVa, uvA);
-    const normal = v3cross(v3sub(pVb, pVa), v3sub(cVb, pVa));
+    const a = pushVert(pVa.position, uvA, pVa.recipe);
+    const b = pushVert(pVb.position, uvB, pVb.recipe);
+    const c = pushVert(cVb.position, uvB, cVb.recipe);
+    const d = pushVert(cVa.position, uvA, cVa.recipe);
+    const normal = v3cross(
+      v3sub(pVb.position, pVa.position),
+      v3sub(cVb.position, pVa.position),
+    );
     if (v3dot(normal, outward) >= 0) target.push(a, b, c, a, c, d);
     else target.push(a, c, b, a, d, c);
   };
@@ -345,8 +428,10 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     target: number[],
     va: number,
     vb: number,
-    faceAEdge: { va: V3; vb: V3 },
-    faceBEdge: { va: V3; vb: V3 },
+    faceAIndex: number,
+    faceBIndex: number,
+    faceAEdge: { va: number; vb: number },
+    faceBEdge: { va: number; vb: number },
     offset: number,
     normalA: V3,
     normalB: V3,
@@ -355,28 +440,95 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     if (Math.abs(offset) <= 1e-9) return;
     const miterVa = hingeMiterPoint(scenePositions[va] as V3, normalA, normalB, offset);
     const miterVb = hingeMiterPoint(scenePositions[vb] as V3, normalA, normalB, offset);
+    const miterVaPoint: DynamicPoint = {
+      position: miterVa,
+      recipe: {
+        kind: "miter",
+        vertexIndex: va,
+        faceAIndex,
+        faceBIndex,
+        normalOffset: offset,
+      },
+    };
+    const miterVbPoint: DynamicPoint = {
+      position: miterVb,
+      recipe: {
+        kind: "miter",
+        vertexIndex: vb,
+        faceAIndex,
+        faceBIndex,
+        normalOffset: offset,
+      },
+    };
     addHingeQuad(
       target,
-      faceAEdge.va, faceAEdge.vb, miterVb, miterVa,
+      dynamicPointAt(faceAEdge.va),
+      dynamicPointAt(faceAEdge.vb),
+      miterVbPoint,
+      miterVaPoint,
       uvOf(va), uvOf(vb), outward,
     );
     addHingeQuad(
       target,
-      miterVa, miterVb, faceBEdge.vb, faceBEdge.va,
+      miterVaPoint,
+      miterVbPoint,
+      dynamicPointAt(faceBEdge.vb),
+      dynamicPointAt(faceBEdge.va),
       uvOf(va), uvOf(vb), outward,
     );
   };
-  const addMiteredHingeCap = (vertex: number, A: typeof faceData[number], B: typeof faceData[number]) => {
-    const capPoints = miteredHingeCapPoints(
-      scenePositions[vertex] as V3,
-      A.nrm,
-      B.nrm,
-      fOff,
-      bOff,
-    );
-    if (capPoints.length < 3) return;
+  const addMiteredHingeCap = (
+    vertex: number,
+    faceAIndex: number,
+    faceBIndex: number,
+    A: typeof faceData[number],
+    B: typeof faceData[number],
+  ) => {
+    const base = scenePositions[vertex] as V3;
+    const capPoints: DynamicPoint[] = [
+      {
+        position: v3add(base, v3scale(A.nrm, fOff)),
+        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceAIndex, normalOffset: fOff },
+      },
+      {
+        position: hingeMiterPoint(base, A.nrm, B.nrm, fOff),
+        recipe: {
+          kind: "miter",
+          vertexIndex: vertex,
+          faceAIndex,
+          faceBIndex,
+          normalOffset: fOff,
+        },
+      },
+      {
+        position: v3add(base, v3scale(B.nrm, fOff)),
+        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceBIndex, normalOffset: fOff },
+      },
+      {
+        position: v3add(base, v3scale(B.nrm, bOff)),
+        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceBIndex, normalOffset: bOff },
+      },
+      {
+        position: hingeMiterPoint(base, A.nrm, B.nrm, bOff),
+        recipe: {
+          kind: "miter",
+          vertexIndex: vertex,
+          faceAIndex,
+          faceBIndex,
+          normalOffset: bOff,
+        },
+      },
+      {
+        position: v3add(base, v3scale(A.nrm, bOff)),
+        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceAIndex, normalOffset: bOff },
+      },
+    ];
     const capVertices = capPoints.map((point, index) =>
-      pushVert(point, [index / Math.max(1, capPoints.length - 1), index === 0 ? 0 : 1]));
+      pushVert(
+        point.position,
+        [index / Math.max(1, capPoints.length - 1), index === 0 ? 0 : 1],
+        point.recipe,
+      ));
     for (let index = 1; index < capVertices.length - 1; index += 1) {
       edgeIndices.push(capVertices[0], capVertices[index], capVertices[index + 1]);
     }
@@ -394,7 +546,12 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       if (fcs.length === 1) {
         const A = faceData[fcs[0]];
         const fa = A.front.get(va)!, fb = A.front.get(vb)!, ba = A.back.get(va)!, bb = A.back.get(vb)!;
-        addEdgeQuad(positionAt(fa), positionAt(fb), positionAt(bb), positionAt(ba));
+        addEdgeQuad(
+          dynamicPointAt(fa),
+          dynamicPointAt(fb),
+          dynamicPointAt(bb),
+          dynamicPointAt(ba),
+        );
       } else if (fcs.length === 2) {
         if (model.edgesAssignment[ei] === "B") return;
         interiorFoldHingeCount += 1;
@@ -410,8 +567,10 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
           frontHingeIndices,
           va,
           vb,
-          { va: positionAt(A.front.get(va)!), vb: positionAt(A.front.get(vb)!) },
-          { va: positionAt(B.front.get(va)!), vb: positionAt(B.front.get(vb)!) },
+          fcs[0],
+          fcs[1],
+          { va: A.front.get(va)!, vb: A.front.get(vb)! },
+          { va: B.front.get(va)!, vb: B.front.get(vb)! },
           fOff,
           A.nrm,
           B.nrm,
@@ -421,8 +580,10 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
           backHingeIndices,
           va,
           vb,
-          { va: positionAt(A.back.get(va)!), vb: positionAt(A.back.get(vb)!) },
-          { va: positionAt(B.back.get(va)!), vb: positionAt(B.back.get(vb)!) },
+          fcs[0],
+          fcs[1],
+          { va: A.back.get(va)!, vb: A.back.get(vb)! },
+          { va: B.back.get(va)!, vb: B.back.get(vb)! },
           bOff,
           A.nrm,
           B.nrm,
@@ -435,7 +596,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         for (const vertex of [va, vb]) {
           if (!boundaryVertices.has(vertex)) continue;
           const before = edgeIndices.length;
-          addMiteredHingeCap(vertex, A, B);
+          addMiteredHingeCap(vertex, fcs[0], fcs[1], A, B);
           foldHingeCapIndexCount += edgeIndices.length - before;
         }
       }
@@ -457,6 +618,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   const pickPos: number[] = [];
   const segmentEdgeIndex: number[] = [];
   const positionsByEdge = new Map<number, number[]>();
+  const edgeLayouts: FoldEdgePositionLayout[] = [];
   const lift = CREASE_LINE_SURFACE_OFFSET;
   let creaseLineCount = 0;
 
@@ -487,18 +649,33 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     const A = v3add([ax / count, ay / count, az / count] as V3, lifted);
     const B = v3add([bx / count, by / count, bz / count] as V3, lifted);
 
+    const edgeLayout: FoldEdgePositionLayout = {
+      edgeIndex: ei,
+      faceIndices: [...fcs],
+      frontAIndices: fcs
+        .map((faceIndex) => faceData[faceIndex].front.get(va))
+        .filter((index): index is number => index !== undefined),
+      frontBIndices: fcs
+        .map((faceIndex) => faceData[faceIndex].front.get(vb))
+        .filter((index): index is number => index !== undefined),
+      pickPositionOffset: pickPos.length,
+    };
     pickPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
     segmentEdgeIndex.push(ei);
     positionsByEdge.set(ei, [A[0], A[1], A[2], B[0], B[1], B[2]]);
+    edgeLayouts.push(edgeLayout);
 
     if (!c) return;
     if (style.dashed) {
+      edgeLayout.dashedPositionOffset = dashedPos.length;
+      edgeLayout.dashedDistanceOffset = dashedDist.length;
       dashedPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
       dashedCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
       const len = Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
       dashedDist.push(0, len);
       creaseLineCount += 1;
     } else {
+      edgeLayout.solidPositionOffset = solidPos.length;
       solidPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
       solidCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
@@ -506,8 +683,15 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
 
   // --- locked / selected face tint overlays ---------------------------------
   const lockedFaces = lockedFaceSet(model, foldStepIndex);
-  const buildTint = (faceFilter: (faceIndex: number) => boolean, tintLift: number): BufferGeometry | null => {
+  const buildTint = (
+    faceFilter: (faceIndex: number) => boolean,
+    tintLift: number,
+  ): {
+    geometry: BufferGeometry | null;
+    recipes: FoldVertexPositionRecipe[];
+  } => {
     const tintPos: number[] = [];
+    const recipes: FoldVertexPositionRecipe[] = [];
     faceData.forEach((face, faceIndex) => {
       if (!faceFilter(faceIndex)) return;
       const liftV = v3scale(face.nrm, tintLift);
@@ -515,19 +699,25 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         for (const vi of [a, b, c2]) {
           const p = v3add(positionAt(face.front.get(vi)!), liftV);
           tintPos.push(p[0], p[1], p[2]);
+          recipes.push({
+            kind: "face",
+            vertexIndex: vi,
+            faceIndex,
+            normalOffset: fOff + tintLift,
+          });
         }
       }
     });
-    if (tintPos.length === 0) return null;
+    if (tintPos.length === 0) return { geometry: null, recipes };
     const geom = new BufferGeometry();
     geom.setAttribute("position", new Float32BufferAttribute(tintPos, 3));
     geom.computeVertexNormals();
-    return geom;
+    return { geometry: geom, recipes };
   };
-  const lockedTintGeometry = buildTint((fi) => lockedFaces.has(fi), LOCKED_TINT_OFFSET);
-  const selectedTintGeometry =
+  const lockedTint = buildTint((fi) => lockedFaces.has(fi), LOCKED_TINT_OFFSET);
+  const selectedTint =
     selectedFaceIndex === null || selectedFaceIndex === undefined
-      ? null
+      ? { geometry: null, recipes: [] }
       : buildTint((fi) => fi === selectedFaceIndex, SELECTED_TINT_OFFSET);
 
   // --- assemble face geometry -----------------------------------------------
@@ -584,8 +774,8 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   return {
     geometry,
     faceIndexByTriangle: Int32Array.from(faceIndexByTriangle),
-    lockedTintGeometry,
-    selectedTintGeometry,
+    lockedTintGeometry: lockedTint.geometry,
+    selectedTintGeometry: selectedTint.geometry,
     solidEdgeGeometry,
     dashedEdgeGeometry,
     edgePickGeometry,
@@ -608,5 +798,239 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       lockedFaceCount: lockedFaces.size,
       flipAll,
     },
+    positionLayout: {
+      model,
+      projection,
+      frame,
+      meshRecipes,
+      lockedTintRecipes: lockedTint.recipes,
+      selectedTintRecipes: selectedTint.recipes,
+      edgeLayouts,
+    },
   };
+}
+
+function writeRecipePosition(
+  target: Float32Array,
+  offset: number,
+  recipe: FoldVertexPositionRecipe,
+  scenePositions: V3[],
+  faceNormals: V3[],
+): void {
+  const base = scenePositions[recipe.vertexIndex];
+  let normal: V3;
+  if (recipe.kind === "face") {
+    normal = faceNormals[recipe.faceIndex];
+  } else {
+    const normalA = faceNormals[recipe.faceAIndex];
+    const normalB = faceNormals[recipe.faceBIndex];
+    const point = hingeMiterPoint(
+      base,
+      normalA,
+      normalB,
+      recipe.normalOffset,
+    );
+    target[offset] = point[0];
+    target[offset + 1] = point[1];
+    target[offset + 2] = point[2];
+    return;
+  }
+  target[offset] = base[0] + normal[0] * recipe.normalOffset;
+  target[offset + 1] = base[1] + normal[1] * recipe.normalOffset;
+  target[offset + 2] = base[2] + normal[2] * recipe.normalOffset;
+}
+
+function updateRecipeGeometry(
+  geometry: BufferGeometry | null,
+  recipes: FoldVertexPositionRecipe[],
+  scenePositions: V3[],
+  faceNormals: V3[],
+  groundOffset: number,
+): void {
+  if (!geometry) return;
+  const attribute = geometry.getAttribute("position");
+  const positions = attribute.array as Float32Array;
+  for (let index = 0; index < recipes.length; index += 1) {
+    const offset = index * 3;
+    writeRecipePosition(
+      positions,
+      offset,
+      recipes[index],
+      scenePositions,
+      faceNormals,
+    );
+    positions[offset + 1] -= groundOffset;
+  }
+  attribute.needsUpdate = true;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+}
+
+function writeLineSegment(
+  positions: Float32Array,
+  offset: number,
+  a: V3,
+  b: V3,
+): void {
+  positions[offset] = a[0];
+  positions[offset + 1] = a[1];
+  positions[offset + 2] = a[2];
+  positions[offset + 3] = b[0];
+  positions[offset + 4] = b[1];
+  positions[offset + 5] = b[2];
+}
+
+/**
+ * Applies a fold frame to the buffers allocated by buildFoldScene. Topology,
+ * attributes, material groups, and geometry identities remain unchanged.
+ */
+export function updateFoldScenePositions(
+  data: FoldSceneData,
+  input: FoldScenePositionInput,
+): void {
+  const { model, projection, frame } = data.positionLayout;
+  const timelineSolve: FoldTimelineSolve = input.foldPositions
+    ? {
+        positions: input.foldPositions,
+        creaseAnglesDeg: {},
+        ratio: 0,
+        method: "source-iterative",
+        maxEdgeError: input.foldMaxEdgeError ?? 0,
+        maxAngleErrorDeg: input.foldMaxAngleErrorDeg ?? 0,
+      }
+    : solveFoldTimeline(model, input.foldStepIndex, input.foldAngle);
+  const foldPositions = projection === "flat-2d"
+    ? flatFoldPositions(model)
+    : timelineSolve.positions;
+  const oriented = applyTransforms(foldPositions, model.transforms);
+  const [cx, cy, cz] = frame.center;
+  const depthSign = projection === "flat-2d" ? -1 : 1;
+  const scenePositions: V3[] = oriented.map((point) => [
+    (point[0] - cx) * frame.scale,
+    (point[2] - cz) * frame.scale,
+    (point[1] - cy) * frame.scale * depthSign,
+  ]);
+  const faceNormals: V3[] = model.facesVertices.map((loop) => {
+    let nx = 0;
+    let ny = 0;
+    let nz = 0;
+    for (let index = 0; index < loop.length; index += 1) {
+      const current = scenePositions[loop[index]];
+      const next = scenePositions[loop[(index + 1) % loop.length]];
+      nx += (current[1] - next[1]) * (current[2] + next[2]);
+      ny += (current[2] - next[2]) * (current[0] + next[0]);
+      nz += (current[0] - next[0]) * (current[1] + next[1]);
+    }
+    return v3norm([nx, ny, nz]);
+  });
+
+  const meshAttribute = data.geometry.getAttribute("position");
+  const meshPositions = meshAttribute.array as Float32Array;
+  for (let index = 0; index < data.positionLayout.meshRecipes.length; index += 1) {
+    writeRecipePosition(
+      meshPositions,
+      index * 3,
+      data.positionLayout.meshRecipes[index],
+      scenePositions,
+      faceNormals,
+    );
+  }
+  let minY = Infinity;
+  for (let offset = 1; offset < meshPositions.length; offset += 3) {
+    minY = Math.min(minY, meshPositions[offset]);
+  }
+  const groundOffset = Number.isFinite(minY) ? minY : 0;
+  for (let offset = 1; offset < meshPositions.length; offset += 3) {
+    meshPositions[offset] -= groundOffset;
+  }
+  meshAttribute.needsUpdate = true;
+  data.geometry.computeVertexNormals();
+  data.geometry.computeBoundingBox();
+  data.geometry.computeBoundingSphere();
+  const box = data.geometry.boundingBox;
+  if (box) {
+    data.bounds.min[0] = box.min.x;
+    data.bounds.min[1] = box.min.y;
+    data.bounds.min[2] = box.min.z;
+    data.bounds.max[0] = box.max.x;
+    data.bounds.max[1] = box.max.y;
+    data.bounds.max[2] = box.max.z;
+  }
+
+  updateRecipeGeometry(
+    data.lockedTintGeometry,
+    data.positionLayout.lockedTintRecipes,
+    scenePositions,
+    faceNormals,
+    groundOffset,
+  );
+  updateRecipeGeometry(
+    data.selectedTintGeometry,
+    data.positionLayout.selectedTintRecipes,
+    scenePositions,
+    faceNormals,
+    groundOffset,
+  );
+
+  const solidAttribute = data.solidEdgeGeometry.getAttribute("position");
+  const solidPositions = solidAttribute.array as Float32Array;
+  const dashedAttribute = data.dashedEdgeGeometry.getAttribute("position");
+  const dashedPositions = dashedAttribute.array as Float32Array;
+  const dashedDistanceAttribute =
+    data.dashedEdgeGeometry.getAttribute("lineDistance");
+  const dashedDistances = dashedDistanceAttribute.array as Float32Array;
+  const pickAttribute = data.edgePickGeometry.getAttribute("position");
+  const pickPositions = pickAttribute.array as Float32Array;
+  for (const edge of data.positionLayout.edgeLayouts) {
+    const a: V3 = [0, 0, 0];
+    const b: V3 = [0, 0, 0];
+    const normal: V3 = [0, 0, 0];
+    const count = edge.frontAIndices.length;
+    for (let index = 0; index < count; index += 1) {
+      const aOffset = edge.frontAIndices[index] * 3;
+      const bOffset = edge.frontBIndices[index] * 3;
+      a[0] += meshPositions[aOffset];
+      a[1] += meshPositions[aOffset + 1];
+      a[2] += meshPositions[aOffset + 2];
+      b[0] += meshPositions[bOffset];
+      b[1] += meshPositions[bOffset + 1];
+      b[2] += meshPositions[bOffset + 2];
+      const faceNormal = faceNormals[edge.faceIndices[index]];
+      normal[0] += faceNormal[0];
+      normal[1] += faceNormal[1];
+      normal[2] += faceNormal[2];
+    }
+    const lifted = v3scale(v3norm(normal), CREASE_LINE_SURFACE_OFFSET);
+    a[0] = a[0] / count + lifted[0];
+    a[1] = a[1] / count + lifted[1];
+    a[2] = a[2] / count + lifted[2];
+    b[0] = b[0] / count + lifted[0];
+    b[1] = b[1] / count + lifted[1];
+    b[2] = b[2] / count + lifted[2];
+    writeLineSegment(pickPositions, edge.pickPositionOffset, a, b);
+    const edgePositions = data.positionsByEdge.get(edge.edgeIndex);
+    if (edgePositions) writeLineSegment(edgePositions, 0, a, b);
+    if (edge.solidPositionOffset !== undefined) {
+      writeLineSegment(solidPositions, edge.solidPositionOffset, a, b);
+    }
+    if (edge.dashedPositionOffset !== undefined) {
+      writeLineSegment(dashedPositions, edge.dashedPositionOffset, a, b);
+    }
+    if (edge.dashedDistanceOffset !== undefined) {
+      dashedDistances[edge.dashedDistanceOffset] = 0;
+      dashedDistances[edge.dashedDistanceOffset + 1] = v3len(v3sub(b, a));
+    }
+  }
+  solidAttribute.needsUpdate = true;
+  dashedAttribute.needsUpdate = true;
+  dashedDistanceAttribute.needsUpdate = true;
+  pickAttribute.needsUpdate = true;
+  data.solidEdgeGeometry.computeBoundingBox();
+  data.solidEdgeGeometry.computeBoundingSphere();
+  data.dashedEdgeGeometry.computeBoundingBox();
+  data.dashedEdgeGeometry.computeBoundingSphere();
+  data.edgePickGeometry.computeBoundingBox();
+  data.edgePickGeometry.computeBoundingSphere();
+  data.timelineSolve = timelineSolve;
 }

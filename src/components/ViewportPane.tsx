@@ -32,13 +32,18 @@ import {
   type PackagingProject,
   type ViewMode,
 } from "@packcad/format";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { artworkImageSources } from "../model/artworkPlacement";
 import {
   isSelectableCrease,
   sourceEdgeIndexFromPickSegment,
 } from "../render/foldLineInteraction";
-import { buildFoldScene, type FoldSceneData } from "../render/foldSceneBuilder";
+import {
+  buildFoldScene,
+  updateFoldScenePositions,
+  type FoldSceneData,
+  type FoldScenePositionInput,
+} from "../render/foldSceneBuilder";
 import {
   HOVER_EDGE_COLOR,
   SELECTED_EDGE_COLOR,
@@ -129,6 +134,20 @@ function replaceOverlayGeometry(
   line.geometry = geometry;
 }
 
+function updateOverlayPositions(
+  line: LineSegments | null,
+  positions: Float32Array | undefined,
+): void {
+  if (!line) return;
+  const attribute = line.geometry.getAttribute("position");
+  const target = attribute.array as Float32Array;
+  if (!positions || target.length !== positions.length) return;
+  target.set(positions);
+  attribute.needsUpdate = true;
+  line.geometry.computeBoundingBox();
+  line.geometry.computeBoundingSphere();
+}
+
 function createFatEdges(
   source: BufferGeometry,
   viewport: Viewport,
@@ -173,6 +192,46 @@ function createFatEdges(
   return { line, geometry, material };
 }
 
+type FatEdges = ReturnType<typeof createFatEdges>;
+
+function updateFatEdgePositions(
+  fatEdges: FatEdges | null,
+  source: BufferGeometry,
+): void {
+  if (!fatEdges) return;
+  const positions = source.getAttribute("position").array as Float32Array;
+  const instanceStart = fatEdges.geometry.getAttribute("instanceStart");
+  const instanceEnd = fatEdges.geometry.getAttribute("instanceEnd");
+  const segmentCount = positions.length / 6;
+  if (
+    instanceStart.count !== segmentCount ||
+    instanceEnd.count !== segmentCount
+  ) {
+    fatEdges.geometry.setPositions(positions);
+  } else {
+    for (let index = 0; index < segmentCount; index += 1) {
+      const offset = index * 6;
+      instanceStart.setXYZ(
+        index,
+        positions[offset],
+        positions[offset + 1],
+        positions[offset + 2],
+      );
+      instanceEnd.setXYZ(
+        index,
+        positions[offset + 3],
+        positions[offset + 4],
+        positions[offset + 5],
+      );
+    }
+    instanceStart.needsUpdate = true;
+    instanceEnd.needsUpdate = true;
+    fatEdges.geometry.computeBoundingBox();
+    fatEdges.geometry.computeBoundingSphere();
+  }
+  if (fatEdges.material.dashed) fatEdges.line.computeLineDistances();
+}
+
 export function ViewportPane({
   project,
   viewMode,
@@ -205,6 +264,8 @@ export function ViewportPane({
   const sceneObjectRef = useRef<Object3D | null>(null);
   const hoverLineRef = useRef<LineSegments | null>(null);
   const selectedLineRef = useRef<LineSegments | null>(null);
+  const solidEdgesRef = useRef<FatEdges | null>(null);
+  const dashedEdgesRef = useRef<FatEdges | null>(null);
   const autoFitRef = useRef<{
     model: PackagingProject["foldModel"];
     viewMode: PackagingProject["viewMode"];
@@ -215,6 +276,10 @@ export function ViewportPane({
   onSelectFoldEdgeRef.current = onSelectFoldEdge;
   const onHoverFoldEdgeRef = useRef(onHoverFoldEdge);
   onHoverFoldEdgeRef.current = onHoverFoldEdge;
+  const selectedFoldEdgeIndexRef = useRef(selectedFoldEdgeIndex);
+  selectedFoldEdgeIndexRef.current = selectedFoldEdgeIndex;
+  const hoveredFoldEdgeIndexRef = useRef(hoveredFoldEdgeIndex);
+  hoveredFoldEdgeIndexRef.current = hoveredFoldEdgeIndex;
 
   const handleReady = useCallback((readyViewport: Viewport): void => {
     readyViewport.renderer.toneMapping = NoToneMapping;
@@ -242,6 +307,21 @@ export function ViewportPane({
   );
   const activeStep = project.foldingSteps[foldStepIndex];
   const foldAngle = activeStep?.angle ?? 0;
+  const foldPositionInputRef = useRef<FoldScenePositionInput>({
+    foldStepIndex,
+    foldAngle,
+  });
+  foldPositionInputRef.current = {
+    foldStepIndex,
+    foldAngle,
+    foldPositions: foldPlayback.positions ?? settlement?.positions,
+    foldMaxEdgeError: foldPlayback.positions
+      ? foldPlayback.solverMaxEdgeError
+      : settlement?.maxEdgeError,
+    foldMaxAngleErrorDeg: foldPlayback.positions
+      ? foldPlayback.solverMaxAngleErrorDeg
+      : settlement?.maxAngleErrorDeg,
+  };
 
   useEffect(() => {
     if (!viewport) return;
@@ -314,6 +394,55 @@ export function ViewportPane({
     };
   }, [artworkSources.back, viewport]);
 
+  const placedFrontArtworkTexture = useMemo(() => {
+    if (!frontArtworkTexture) return null;
+    const texture = configureArtworkTexture(frontArtworkTexture.clone());
+    applyArtworkPlacement(texture, project.artwork, viewMode === "2d");
+    return texture;
+  }, [frontArtworkTexture, project.artwork, viewMode]);
+  const placedBackArtworkTexture = useMemo(() => {
+    const source = backArtworkTexture ?? frontArtworkTexture;
+    if (!source) return null;
+    const texture = configureArtworkTexture(source.clone());
+    applyArtworkPlacement(texture, project.artwork, false);
+    return texture;
+  }, [backArtworkTexture, frontArtworkTexture, project.artwork]);
+  useEffect(
+    () => () => {
+      placedFrontArtworkTexture?.dispose();
+      placedBackArtworkTexture?.dispose();
+    },
+    [placedBackArtworkTexture, placedFrontArtworkTexture],
+  );
+
+  const foldSceneMaterials = useMemo(() => {
+    const materialDefinition = materials[project.material];
+    return createFoldSceneMaterials({
+      viewMode,
+      technical: project.renderMode === "technical",
+      showArtwork: panelColorMode === "artwork",
+      useFaceColors: panelColorMode === "multicolor",
+      frontArtworkTexture: placedFrontArtworkTexture,
+      backArtworkTexture: placedBackArtworkTexture,
+      edgeTexture: materialTexture,
+      edgeFallbackColor: materialDefinition.color,
+    });
+  }, [
+    materialTexture,
+    panelColorMode,
+    placedBackArtworkTexture,
+    placedFrontArtworkTexture,
+    project.material,
+    project.renderMode,
+    viewMode,
+  ]);
+  useEffect(
+    () => () => {
+      for (const material of foldSceneMaterials) material.dispose();
+    },
+    [foldSceneMaterials],
+  );
+
   useEffect(() => {
     if (!viewport) return;
     const showSceneHelpers = showGroundPlane && viewMode === "3d";
@@ -367,6 +496,37 @@ export function ViewportPane({
     backgroundColor,
     project.renderMode,
     showShadow,
+    viewMode,
+    viewport,
+  ]);
+
+  useEffect(() => {
+    const data = sceneDataRef.current;
+    if (!data || !viewport || viewMode === "2d") return;
+    updateFoldScenePositions(data, foldPositionInputRef.current);
+    updateFatEdgePositions(solidEdgesRef.current, data.solidEdgeGeometry);
+    updateFatEdgePositions(dashedEdgesRef.current, data.dashedEdgeGeometry);
+    updateOverlayPositions(
+      selectedLineRef.current,
+      selectedFoldEdgeIndexRef.current === null
+        ? undefined
+        : data.positionsByEdge.get(selectedFoldEdgeIndexRef.current),
+    );
+    updateOverlayPositions(
+      hoverLineRef.current,
+      hoveredFoldEdgeIndexRef.current === null
+        ? undefined
+        : data.positionsByEdge.get(hoveredFoldEdgeIndexRef.current),
+    );
+    viewport.invalidate();
+  }, [
+    foldAngle,
+    foldPlayback.positions,
+    foldPlayback.solverMaxAngleErrorDeg,
+    foldPlayback.solverMaxEdgeError,
+    settlement?.maxAngleErrorDeg,
+    settlement?.maxEdgeError,
+    settlement?.positions,
     viewMode,
     viewport,
   ]);
@@ -444,60 +604,24 @@ export function ViewportPane({
       onSceneObject?.(null);
       return;
     }
+    const positionInput = foldPositionInputRef.current;
     const data = buildFoldScene({
       model,
       projection: viewMode === "2d" ? "flat-2d" : "folded-3d",
       foldStepIndex,
-      foldAngle,
+      foldAngle: positionInput.foldAngle,
       thicknessMm: project.thicknessMm,
       thicknessOffsetDirection,
       panelColorMode,
       edgeColorMode,
       selectedFaceIndex,
-      foldPositions: foldPlayback.positions ?? settlement?.positions,
-      foldMaxEdgeError: foldPlayback.positions
-        ? foldPlayback.solverMaxEdgeError
-        : settlement?.maxEdgeError,
-      foldMaxAngleErrorDeg: foldPlayback.positions
-        ? foldPlayback.solverMaxAngleErrorDeg
-        : settlement?.maxAngleErrorDeg,
+      foldPositions: positionInput.foldPositions,
+      foldMaxEdgeError: positionInput.foldMaxEdgeError,
+      foldMaxAngleErrorDeg: positionInput.foldMaxAngleErrorDeg,
     });
     sceneDataRef.current = data;
 
-    const materialDefinition = materials[project.material];
-    const technical = project.renderMode === "technical";
-    const showArtwork = panelColorMode === "artwork";
-    const useFaceColors = panelColorMode === "multicolor";
-    // Keep the legacy handedness split exactly: flat-2D mirrors the front atlas,
-    // folded-3D does not; the BackSide rasterization supplies the reverse-face
-    // flip, so its texture is never pre-mirrored.
-    const placedFrontArtworkTexture = frontArtworkTexture
-      ? configureArtworkTexture(frontArtworkTexture.clone())
-      : null;
-    const rawBackArtworkTexture = backArtworkTexture ?? frontArtworkTexture;
-    const placedBackArtworkTexture = rawBackArtworkTexture
-      ? configureArtworkTexture(rawBackArtworkTexture.clone())
-      : null;
-    if (placedFrontArtworkTexture) {
-      applyArtworkPlacement(
-        placedFrontArtworkTexture,
-        project.artwork,
-        viewMode === "2d",
-      );
-    }
-    if (placedBackArtworkTexture) {
-      applyArtworkPlacement(placedBackArtworkTexture, project.artwork, false);
-    }
-    const [frontMaterial, backMaterial, edgeMaterial] = createFoldSceneMaterials({
-      viewMode,
-      technical,
-      showArtwork,
-      useFaceColors,
-      frontArtworkTexture: placedFrontArtworkTexture,
-      backArtworkTexture: placedBackArtworkTexture,
-      edgeTexture: materialTexture,
-      edgeFallbackColor: materialDefinition.color,
-    });
+    const [frontMaterial, backMaterial, edgeMaterial] = foldSceneMaterials;
     const mesh = new Mesh(data.geometry, [frontMaterial, backMaterial, edgeMaterial]);
     mesh.castShadow = showShadow && viewMode === "3d";
     mesh.receiveShadow = true;
@@ -511,6 +635,8 @@ export function ViewportPane({
       linewidth: 1.7,
       depthTest: viewMode !== "2d",
     });
+    solidEdgesRef.current = solidEdges;
+    dashedEdgesRef.current = dashedEdges;
     const updateDashScale = (): void => {
       if (viewMode !== "2d") return;
       const zoom = viewport.camera.getState().zoom;
@@ -590,17 +716,14 @@ export function ViewportPane({
       if (sceneObjectRef.current === group) sceneObjectRef.current = null;
       if (selectedLineRef.current === selectedLine) selectedLineRef.current = null;
       if (hoverLineRef.current === hoverLine) hoverLineRef.current = null;
+      if (solidEdgesRef.current === solidEdges) solidEdgesRef.current = null;
+      if (dashedEdgesRef.current === dashedEdges) dashedEdgesRef.current = null;
       if (interactive) {
         viewport.picking.unregister(mesh);
         viewport.picking.unregister(edgePickLines);
       }
       offCameraChange();
       viewport.scene.remove(group);
-      frontMaterial.dispose();
-      backMaterial.dispose();
-      edgeMaterial.dispose();
-      placedFrontArtworkTexture?.dispose();
-      placedBackArtworkTexture?.dispose();
       solidEdges.geometry.dispose();
       solidEdges.material.dispose();
       dashedEdges.geometry.dispose();
@@ -615,26 +738,16 @@ export function ViewportPane({
       viewport.invalidate();
     };
   }, [
-    backArtworkTexture,
     compact,
     edgeColorMode,
-    foldAngle,
-    foldPlayback.positions,
-    foldPlayback.solverMaxAngleErrorDeg,
-    foldPlayback.solverMaxEdgeError,
     foldStepIndex,
-    frontArtworkTexture,
+    foldSceneMaterials,
     interactive,
-    materialTexture,
     model,
     onSceneObject,
     panelColorMode,
-    project.material,
-    project.artwork,
-    project.renderMode,
     project.thicknessMm,
     selectedFaceIndex,
-    settlement,
     showShadow,
     thicknessOffsetDirection,
     viewMode,
