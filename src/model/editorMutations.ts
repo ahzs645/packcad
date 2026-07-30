@@ -4,6 +4,7 @@ import {
   createProject,
   materials,
   resetFolding,
+  type CameraProjection,
   type CameraPreset,
   type MaterialId,
   type PackagingProject,
@@ -87,10 +88,20 @@ export function setArtworkPlacement(
   return {
     ...project,
     artwork: {
+      ...project.artwork,
       x: clampNumber(placement.x ?? project.artwork.x, -1, 1),
       y: clampNumber(placement.y ?? project.artwork.y, -1, 1),
       scale: clampNumber(placement.scale ?? project.artwork.scale, 0.25, 2),
       rotation: clampNumber(placement.rotation ?? project.artwork.rotation, -180, 180),
+      imageDataUrl: placement.imageDataUrl === undefined
+        ? project.artwork.imageDataUrl
+        : placement.imageDataUrl,
+      imageName: placement.imageName === undefined
+        ? project.artwork.imageName
+        : placement.imageName,
+      panelIndex: placement.panelIndex === undefined
+        ? project.artwork.panelIndex
+        : placement.panelIndex,
     },
   };
 }
@@ -145,6 +156,16 @@ export function setCameraPreset(
   return {
     ...project,
     cameraPreset,
+  };
+}
+
+export function setCameraProjection(
+  project: PackagingProject,
+  projection: CameraProjection,
+): PackagingProject {
+  return {
+    ...project,
+    projection,
   };
 }
 

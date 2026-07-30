@@ -20,6 +20,9 @@ importers:
       '@atelier/react':
         specifier: link:../atelier/packages/react
         version: link:../atelier/packages/react
+      '@atelier/sim':
+        specifier: link:../atelier/packages/sim
+        version: link:../atelier/packages/sim
       '@atelier/viewport':
         specifier: link:../atelier/packages/viewport
         version: link:../atelier/packages/viewport
@@ -57,6 +60,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.0.4
         version: 6.0.4(vite@8.1.5(@types/node@24.13.3))
+      '@webgpu/types':
+        specifier: 0.1.71
+        version: 0.1.71
       eslint:
         specifier: 9.39.5
         version: 9.39.5
@@ -81,6 +87,9 @@ importers:
       '@atelier/geometry':
         specifier: file:../../../atelier/packages/geometry
         version: file:../atelier/packages/geometry
+      '@atelier/sim':
+        specifier: file:../../../atelier/packages/sim
+        version: file:../atelier/packages/sim
       '@packcad/format':
         specifier: workspace:*
         version: link:../packcad-format
@@ -110,6 +119,9 @@ packages:
     resolution: {directory: ../atelier/packages/io, type: directory}
     peerDependencies:
       three: '>=0.170.0'
+
+  '@atelier/sim@file:../atelier/packages/sim':
+    resolution: {directory: ../atelier/packages/sim, type: directory}
 
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
@@ -426,6 +438,9 @@ packages:
 
   '@vitest/utils@4.1.10':
     resolution: {integrity: sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==}
+
+  '@webgpu/types@0.1.71':
+    resolution: {integrity: sha512-mMy8/ODcKhab808co15eW+yN+HgXoQxRQHTiBV9Mrvl1r0ufnid7YOcI+gi4eUWSWl9ezD6TW2KXccrL8HCh2A==}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1079,6 +1094,11 @@ snapshots:
       '@atelier/geometry': file:../atelier/packages/geometry
       three: 0.181.2
 
+  '@atelier/sim@file:../atelier/packages/sim':
+    dependencies:
+      '@atelier/core': file:../atelier/packages/core
+      '@atelier/geometry': file:../atelier/packages/geometry
+
   '@dimforge/rapier3d-compat@0.12.0': {}
 
   '@emnapi/core@1.11.1':
@@ -1402,6 +1422,8 @@ snapshots:
       '@vitest/pretty-format': 4.1.10
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
+
+  '@webgpu/types@0.1.71': {}
 
   acorn-jsx@5.3.2(acorn@8.17.0):
     dependencies:

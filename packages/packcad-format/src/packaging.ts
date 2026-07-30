@@ -7,6 +7,8 @@ export type RenderMode = "solid" | "technical";
 
 export type CameraPreset = "isometric" | "front" | "top";
 
+export type CameraProjection = "perspective" | "orthographic";
+
 export type MaterialId =
   | "chipboard"
   | "corrugated"
@@ -46,6 +48,17 @@ export type ArtworkPlacement = {
   y: number;
   scale: number;
   rotation: number;
+  /**
+   * Uploaded artwork is stored with the project rather than as an object URL so
+   * undo/redo, IndexedDB drafts, and reopened sessions all see the same image.
+   */
+  imageDataUrl?: string | null;
+  imageName?: string | null;
+  /**
+   * The face used by the "place on panel" affordance. Rendering still uses the
+   * source FOLD UV atlas; this index records the author's chosen target.
+   */
+  panelIndex?: number | null;
 };
 
 export type PanelId =
@@ -74,6 +87,7 @@ export type PackagingProject = {
   renderMode: RenderMode;
   showHelpers: boolean;
   cameraPreset: CameraPreset;
+  projection: CameraProjection;
   selectedPanelId: PanelId | null;
   /** Bottom/fixed panel for the folding simulation (Folding Setup). */
   fixedPanelId: PanelId | null;
@@ -168,11 +182,15 @@ export function createProject(): PackagingProject {
       y: 0,
       scale: 1,
       rotation: 0,
+      imageDataUrl: null,
+      imageName: null,
+      panelIndex: null,
     },
     viewMode: "3d",
     renderMode: "solid",
     showHelpers: true,
     cameraPreset: "isometric",
+    projection: "perspective",
     selectedPanelId: null,
     fixedPanelId: null,
     activeStepId: "setup",
@@ -194,10 +212,10 @@ export function getActiveStep(project: PackagingProject): FoldingStep {
 }
 
 export function createImportedDieline(fileName: string, text: string): DielineSource {
-  const isSvg = text.trimStart().startsWith("<svg");
+  const rootElement = /<([a-z][\w:-]*)\b/i.exec(text)?.[1]?.toLowerCase();
   return {
     name: fileName,
-    kind: isSvg ? "svg" : "text",
+    kind: rootElement === "svg" ? "svg" : "text",
     text,
   };
 }

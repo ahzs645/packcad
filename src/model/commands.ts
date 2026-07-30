@@ -3,6 +3,7 @@ import {
   type CommandDef,
 } from "@atelier/core";
 import type {
+  CameraProjection,
   CameraPreset,
   PackCadDesign,
   PackagingProject,
@@ -23,6 +24,7 @@ import {
   setActiveFoldAngle,
   setArtworkColor,
   setArtworkPlacement,
+  setCameraProjection,
   setCameraPreset,
   setFixedPanel,
   setRenderMode,
@@ -89,7 +91,7 @@ export function createCommandRegistry(): CommandRegistry<PackagingProject> {
   add(command<Partial<PackagingProject["artwork"]>>(
     "artwork.setPlacement",
     "Move artwork",
-    ["x", "y", "scale", "rotation"],
+    ["x", "y", "scale", "rotation", "imageDataUrl", "imageName", "panelIndex"],
     setArtworkPlacement,
   ));
   add(command("artwork.resetPlacement", "Reset artwork placement", [], resetArtworkPlacement));
@@ -102,6 +104,12 @@ export function createCommandRegistry(): CommandRegistry<PackagingProject> {
   add(command("view.toggleHelpers", "Toggle helpers", [], toggleHelpers));
   add(command<{ cameraPreset: CameraPreset }>("view.setCamera", "Change camera", ["cameraPreset"], (project, params) =>
     setCameraPreset(project, params.cameraPreset)));
+  add(command<{ projection: CameraProjection }>(
+    "view.setProjection",
+    "Change camera projection",
+    ["projection"],
+    (project, params) => setCameraProjection(project, params.projection),
+  ));
   add(command<{ panelId: PanelId }>("selection.selectPanel", "Select panel", ["panelId"], (project, params) =>
     selectPanel(project, params.panelId)));
   add(command<{ panelId: PanelId | null }>("fold.setFixedPanel", "Set fixed panel", ["panelId"], (project, params) =>

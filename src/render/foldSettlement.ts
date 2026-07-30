@@ -2,28 +2,16 @@ import type { FoldKeyframe, FoldModel } from "@packcad/format";
 import type { V3 } from "./foldSceneBuilder";
 
 export type FoldSettlementRequest = {
-  requestId: number;
-  model: FoldModel;
   foldStepIndex: number;
   foldAngle: number;
 };
 
-export type FoldSettlementSuccess = {
-  requestId: number;
-  ok: true;
+export type CachedFoldSettlement = {
   positions: V3[];
   maxEdgeError: number;
   maxAngleErrorDeg: number;
   converged: boolean;
 };
-
-export type FoldSettlementFailure = {
-  requestId: number;
-  ok: false;
-  message: string;
-};
-
-export type FoldSettlementResponse = FoldSettlementSuccess | FoldSettlementFailure;
 
 export type FoldDiagnostics =
   | { status: "settling" }
@@ -34,8 +22,6 @@ export type FoldDiagnostics =
       converged: boolean;
     }
   | { status: "error"; message: string };
-
-export type CachedFoldSettlement = Omit<FoldSettlementSuccess, "requestId" | "ok">;
 
 function finalImplicitClosureAngles(
   model: FoldModel,

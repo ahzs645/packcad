@@ -1,4 +1,8 @@
-import { materialCatalogByGroup, type PackagingProject } from "@packcad/format";
+import {
+  materialCatalogByGroup,
+  materials,
+  type PackagingProject,
+} from "@packcad/format";
 
 interface MaterialPanelProps {
   project: PackagingProject;
@@ -26,7 +30,12 @@ export function MaterialPanel({ project, onSelect }: MaterialPanelProps) {
               onClick={() => onSelect(spec.id)}
               key={spec.id}
             >
-              <i style={{ background: swatchColor[spec.swatch] }} />
+              <i
+                style={{
+                  backgroundColor: swatchColor[spec.swatch],
+                  backgroundImage: `url(${materials[spec.swatch].texture})`,
+                }}
+              />
               <span>{spec.label}</span>
               <small>{(spec.thicknessIn * 25.4).toFixed(2)} mm</small>
             </button>

@@ -10,6 +10,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@atelier/geometry": "file:../../../atelier/packages/geometry",
+    "@atelier/sim": "file:../../../atelier/packages/sim",
     "@packcad/format": "workspace:*"
   },
   "devDependencies": {

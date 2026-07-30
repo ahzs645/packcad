@@ -79,8 +79,6 @@ Each omission is visible here rather than represented by a non-working control.
 - File-open, save-document, local-draft, share-route, and recovery UI — from
   `packager/src/model/{localDrafts,projectDocument,routeState}.ts` and the corresponding
   sections of `packager/src/App.tsx`.
-- User-supplied SVG/PackCAD file picker UI — parsing is available in `@packcad/format`; the
-  source controls remain in `packager/src/App.tsx`.
 - Artwork image upload, front/back texture placement, and texture previews — from
   `packager/src/App.tsx`, `packager/src/render/FoldScene.tsx`, and
   `packager/src/render/ThreePreview.tsx`.
