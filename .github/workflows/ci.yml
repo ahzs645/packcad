@@ -35,6 +35,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: packcad/pnpm-lock.yaml
 
+      - name: Install engine dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: atelier
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: packcad
