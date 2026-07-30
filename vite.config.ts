@@ -5,7 +5,7 @@ export default defineConfig({
   base: process.env.BASE_PATH ?? "/",
   plugins: [react()],
   resolve: {
-    dedupe: ["three"],
+    dedupe: ["react", "react-dom", "three"],
   },
   test: {
     include: ["packages/**/*.test.ts", "src/**/*.test.ts"],
