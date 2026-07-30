@@ -54,6 +54,8 @@ export type ArtworkPlacement = {
    */
   imageDataUrl?: string | null;
   imageName?: string | null;
+  backImageDataUrl?: string | null;
+  backImageName?: string | null;
   /**
    * The face used by the "place on panel" affordance. Rendering still uses the
    * source FOLD UV atlas; this index records the author's chosen target.
@@ -189,13 +191,15 @@ export function createProject(): PackagingProject {
       rotation: 0,
       imageDataUrl: null,
       imageName: null,
+      backImageDataUrl: null,
+      backImageName: null,
       panelIndex: null,
     },
     viewMode: "3d",
     renderMode: "solid",
     showHelpers: true,
     cameraPreset: "isometric",
-    projection: "perspective",
+    projection: "orthographic",
     selectedPanelId: null,
     fixedPanelId: null,
     activeStepId: "setup",

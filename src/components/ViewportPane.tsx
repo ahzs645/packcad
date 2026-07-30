@@ -1,36 +1,36 @@
 import {
   AxesHelper,
-  BackSide,
   Box3,
   BufferGeometry,
   ClampToEdgeWrapping,
-  Color,
-  DoubleSide,
   Float32BufferAttribute,
-  FrontSide,
+  GridHelper,
   Group,
   LinearFilter,
   LineBasicMaterial,
-  LineDashedMaterial,
   LineSegments,
   Mesh,
-  MeshStandardMaterial,
+  NoToneMapping,
   RepeatWrapping,
   SRGBColorSpace,
   TextureLoader,
   type Object3D,
   type Texture,
 } from "three";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { ViewportCanvas } from "@atelier/react";
-import { SolveSuperseded } from "@atelier/sim";
 import type { PickHit, Viewport } from "@atelier/viewport";
-import type { FoldingPlayerState } from "@packcad/fold-solver";
+import type {
+  FoldingPlayerState,
+  ThicknessOffsetDirection,
+} from "@packcad/fold-solver";
 import {
+  materialCatalog,
   materials,
-  type CameraProjection,
-  type CameraPreset,
   type PackagingProject,
-  type RenderMode,
+  type ViewMode,
 } from "@packcad/format";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { artworkImageSources } from "../model/artworkPlacement";
@@ -43,37 +43,42 @@ import {
   HOVER_EDGE_COLOR,
   SELECTED_EDGE_COLOR,
 } from "../render/edgeStyle";
+import {
+  createFoldSceneMaterials,
+  FOLD_SCENE_POST_PROCESSING,
+} from "../render/foldSceneMaterials";
 import type {
   CachedFoldSettlement,
-  FoldDiagnostics,
 } from "../render/foldSettlement";
-import {
-  createFoldSettlementWorkerPlugin,
-  FoldSettlementClient,
-} from "../render/foldSettlementPlugin";
+import type {
+  EdgeColorMode,
+  PanelColorMode,
+} from "../render/foldViewSettings";
 
 interface ViewportPaneProps {
   project: PackagingProject;
+  viewMode: ViewMode;
   foldPlayback: FoldingPlayerState;
+  settlement: CachedFoldSettlement | null;
   selectedFaceIndex: number | null;
   selectedFoldEdgeIndex: number | null;
   hoveredFoldEdgeIndex: number | null;
   onSelectFace: (faceIndex: number | null) => void;
   onSelectFoldEdge: (edgeIndex: number | null) => void;
   onHoverFoldEdge: (edgeIndex: number | null) => void;
-  onSceneObject: (object: Object3D | null) => void;
-  onFoldDiagnostics: (diagnostics: FoldDiagnostics) => void;
-  onSetRenderMode: (renderMode: RenderMode) => void;
-  onSetCamera: (cameraPreset: CameraPreset) => void;
-  onSetProjection: (projection: CameraProjection) => void;
-  onSetHelpers: (showHelpers: boolean) => void;
+  onSceneObject?: (object: Object3D | null) => void;
+  panelColorMode?: PanelColorMode;
+  edgeColorMode?: EdgeColorMode;
+  showGroundPlane?: boolean;
+  showOrigin?: boolean;
+  showShadow?: boolean;
+  backgroundColor?: string;
+  compact?: boolean;
+  interactive?: boolean;
+  fitNonce?: number;
+  thicknessOffsetDirection?: ThicknessOffsetDirection;
+  fluteAngle?: number;
 }
-
-type ActiveSettlement = {
-  model: NonNullable<PackagingProject["foldModel"]>;
-  cacheKey: string;
-  data: CachedFoldSettlement;
-};
 
 function disposeSceneData(data: FoldSceneData): void {
   data.geometry.dispose();
@@ -124,9 +129,55 @@ function replaceOverlayGeometry(
   line.geometry = geometry;
 }
 
+function createFatEdges(
+  source: BufferGeometry,
+  viewport: Viewport,
+  options: {
+    dashed?: boolean;
+    linewidth: number;
+    depthTest: boolean;
+  },
+): {
+  line: LineSegments2;
+  geometry: LineSegmentsGeometry;
+  material: LineMaterial;
+} {
+  const geometry = new LineSegmentsGeometry();
+  geometry.setPositions(
+    source.getAttribute("position").array as Float32Array,
+  );
+  geometry.setColors(
+    source.getAttribute("color").array as Float32Array,
+  );
+  const material = new LineMaterial({
+    vertexColors: true,
+    linewidth: options.linewidth,
+    worldUnits: false,
+    dashed: options.dashed ?? false,
+    dashSize: 0.05,
+    gapSize: 0.03,
+    depthTest: options.depthTest,
+    depthWrite: false,
+    transparent: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  material.resolution.set(
+    Math.max(1, viewport.renderer.domElement.clientWidth),
+    Math.max(1, viewport.renderer.domElement.clientHeight),
+  );
+  const line = new LineSegments2(geometry, material);
+  if (options.dashed) line.computeLineDistances();
+  line.renderOrder = 3;
+  return { line, geometry, material };
+}
+
 export function ViewportPane({
   project,
+  viewMode,
   foldPlayback,
+  settlement,
   selectedFaceIndex,
   selectedFoldEdgeIndex,
   hoveredFoldEdgeIndex,
@@ -134,14 +185,19 @@ export function ViewportPane({
   onSelectFoldEdge,
   onHoverFoldEdge,
   onSceneObject,
-  onFoldDiagnostics,
-  onSetRenderMode,
-  onSetCamera,
-  onSetProjection,
-  onSetHelpers,
+  panelColorMode = "artwork",
+  edgeColorMode = "mountain-valley",
+  showGroundPlane = project.showHelpers,
+  showOrigin = project.showHelpers,
+  showShadow = true,
+  backgroundColor = viewMode === "2d" ? "#f2f2f3" : "#ffffff",
+  compact = false,
+  interactive = true,
+  fitNonce = 0,
+  thicknessOffsetDirection,
+  fluteAngle = 0,
 }: ViewportPaneProps) {
   const [viewport, setViewport] = useState<Viewport | null>(null);
-  const [settlement, setSettlement] = useState<ActiveSettlement | null>(null);
   const [materialTexture, setMaterialTexture] = useState<Texture | null>(null);
   const [frontArtworkTexture, setFrontArtworkTexture] = useState<Texture | null>(null);
   const [backArtworkTexture, setBackArtworkTexture] = useState<Texture | null>(null);
@@ -153,7 +209,6 @@ export function ViewportPane({
     model: PackagingProject["foldModel"];
     viewMode: PackagingProject["viewMode"];
   } | null>(null);
-  const settlementClientRef = useRef<FoldSettlementClient | null>(null);
   const onSelectFaceRef = useRef(onSelectFace);
   onSelectFaceRef.current = onSelectFace;
   const onSelectFoldEdgeRef = useRef(onSelectFoldEdge);
@@ -162,6 +217,8 @@ export function ViewportPane({
   onHoverFoldEdgeRef.current = onHoverFoldEdge;
 
   const handleReady = useCallback((readyViewport: Viewport): void => {
+    readyViewport.renderer.toneMapping = NoToneMapping;
+    readyViewport.renderer.toneMappingExposure = 1;
     setViewport(readyViewport);
   }, []);
 
@@ -169,21 +226,14 @@ export function ViewportPane({
     if (!viewport || !sceneObjectRef.current) return;
     viewport.camera.fit(
       new Box3().setFromObject(sceneObjectRef.current),
-      project.viewMode === "2d" ? 1.08 : 1.35,
+      viewMode === "2d" ? 1.08 : 1.35,
     );
     viewport.invalidate();
-  }, [project.viewMode, viewport]);
+  }, [viewMode, viewport]);
 
   useEffect(() => {
-    const client = new FoldSettlementClient(
-      createFoldSettlementWorkerPlugin(),
-    );
-    settlementClientRef.current = client;
-    return () => {
-      settlementClientRef.current = null;
-      client.dispose();
-    };
-  }, []);
+    if (fitNonce > 0) fitToView();
+  }, [fitNonce, fitToView]);
 
   const model = project.foldModel;
   const foldStepIndex = Math.max(
@@ -192,72 +242,13 @@ export function ViewportPane({
   );
   const activeStep = project.foldingSteps[foldStepIndex];
   const foldAngle = activeStep?.angle ?? 0;
-  const settlementKey = `${foldStepIndex}:${foldAngle}`;
-  const activeSettlement =
-    settlement && settlement.model === model && settlement.cacheKey === settlementKey
-      ? settlement.data
-      : null;
-
-  useEffect(() => {
-    const client = settlementClientRef.current;
-    if (!client) return;
-    if (!model) {
-      client.cancel();
-      setSettlement(null);
-      return;
-    }
-    if (foldPlayback.positions) {
-      client.cancel();
-      setSettlement(null);
-      onFoldDiagnostics({
-        status: "settled",
-        maxEdgeError: foldPlayback.solverMaxEdgeError,
-        maxAngleErrorDeg: foldPlayback.solverMaxAngleErrorDeg,
-        converged: foldPlayback.solverIsSolved,
-      });
-      return;
-    }
-    const cacheKey = settlementKey;
-    let cancelled = false;
-    setSettlement(null);
-    onFoldDiagnostics({ status: "settling" });
-    void client.solve(model, { foldStepIndex, foldAngle }).then((next) => {
-      if (cancelled) return;
-      setSettlement({ model, cacheKey, data: next });
-      onFoldDiagnostics({
-        status: "settled",
-        maxEdgeError: next.maxEdgeError,
-        maxAngleErrorDeg: next.maxAngleErrorDeg,
-        converged: next.converged,
-      });
-    }).catch((error: unknown) => {
-      if (cancelled || error instanceof SolveSuperseded) return;
-      setSettlement(null);
-      onFoldDiagnostics({
-        status: "error",
-        message: error instanceof Error
-          ? error.message
-          : "The settled fold solver failed.",
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    foldAngle,
-    foldPlayback.positions,
-    foldPlayback.solverIsSolved,
-    foldPlayback.solverMaxAngleErrorDeg,
-    foldPlayback.solverMaxEdgeError,
-    foldStepIndex,
-    model,
-    onFoldDiagnostics,
-    settlementKey,
-  ]);
 
   useEffect(() => {
     if (!viewport) return;
-    const definition = materials[project.material];
+    const specification = materialCatalog[project.materialSpec];
+    const definition = specification?.group === "corrugated"
+      ? materials.flute
+      : materials[project.material];
     let cancelled = false;
     setMaterialTexture(null);
     const texture = new TextureLoader().load(definition.texture, () => {
@@ -269,12 +260,18 @@ export function ViewportPane({
     texture.colorSpace = SRGBColorSpace;
     texture.wrapS = RepeatWrapping;
     texture.wrapT = RepeatWrapping;
+    texture.center.set(0.5, 0.5);
+    texture.rotation = (fluteAngle * Math.PI) / 180;
+    texture.repeat.set(
+      Math.max(1, (specification?.fluteFrequencyPerIn ?? 0) / 7.5),
+      1,
+    );
     texture.needsUpdate = true;
     return () => {
       cancelled = true;
       texture.dispose();
     };
-  }, [project.material, viewport]);
+  }, [fluteAngle, project.material, project.materialSpec, viewport]);
 
   const artworkSources = artworkImageSources(project);
   useEffect(() => {
@@ -319,46 +316,85 @@ export function ViewportPane({
 
   useEffect(() => {
     if (!viewport) return;
-    const showSceneHelpers = project.showHelpers && project.viewMode === "3d";
+    const showSceneHelpers = showGroundPlane && viewMode === "3d";
     viewport.lighting.setGround(showSceneHelpers
-      ? { grid: true, shadowCatcher: true, size: 8 }
+      ? {
+          grid: true,
+          shadowCatcher: showShadow,
+          size: 8,
+        }
       : null);
-    if (!showSceneHelpers) return;
-    const axes = new AxesHelper(0.75);
-    axes.position.set(-2, 0.002, -2);
-    viewport.scene.add(axes);
+    const helpers: Array<AxesHelper | GridHelper> = [];
+    if (showGroundPlane && viewMode === "2d") {
+      const grid = new GridHelper(8, 40, "#d7d7d7", "#ececec");
+      grid.position.y = -0.01;
+      viewport.scene.add(grid);
+      helpers.push(grid);
+    }
+    if (showOrigin) {
+      const axes = new AxesHelper(0.75);
+      axes.position.set(-2, 0.002, -2);
+      viewport.scene.add(axes);
+      helpers.push(axes);
+    }
+    if (helpers.length === 0) return;
     viewport.invalidate();
     return () => {
-      viewport.scene.remove(axes);
-      axes.dispose();
+      for (const helper of helpers) {
+        viewport.scene.remove(helper);
+        helper.dispose();
+      }
       viewport.invalidate();
     };
-  }, [project.showHelpers, project.viewMode, viewport]);
+  }, [showGroundPlane, showOrigin, showShadow, viewMode, viewport]);
 
   useEffect(() => {
     if (!viewport) return;
     viewport.lighting.setPreset(
-      project.renderMode === "technical" ? "technical" : "studio",
+      project.renderMode === "technical"
+        ? "technical"
+        : viewMode === "2d" ? "flat" : "studio",
     );
-    viewport.post.setEnabled(project.renderMode === "solid" && project.viewMode === "3d");
-  }, [project.renderMode, project.viewMode, viewport]);
+    viewport.lighting.setBackground(backgroundColor);
+    viewport.lighting.setShadows(showShadow && viewMode === "3d");
+    viewport.post.setEnabled(FOLD_SCENE_POST_PROCESSING);
+    if (project.renderMode === "solid" && viewMode === "3d") {
+      void viewport.lighting.setEnvironment("room", 0.55);
+    } else {
+      viewport.lighting.clearEnvironment();
+    }
+  }, [
+    backgroundColor,
+    project.renderMode,
+    showShadow,
+    viewMode,
+    viewport,
+  ]);
 
   useEffect(() => {
     if (!viewport) return;
     viewport.camera.setKind(
-      project.viewMode === "2d" ? "orthographic" : project.projection,
+      viewMode === "2d" ? "orthographic" : project.projection,
     );
     fitToView();
-  }, [fitToView, project.projection, project.viewMode, viewport]);
+  }, [fitToView, project.projection, viewMode, viewport]);
 
   useEffect(() => {
     if (!viewport) return;
-    viewport.camera.setView(project.viewMode === "2d" ? "top" : project.cameraPreset);
+    viewport.camera.setView(viewMode === "2d" ? "top" : project.cameraPreset);
+    viewport.camera.setInputMap(interactive
+      ? {}
+      : {
+          left: "none",
+          middle: "none",
+          right: "none",
+          modified: { left: "none", right: "none" },
+        });
     fitToView();
-  }, [fitToView, project.cameraPreset, project.viewMode, viewport]);
+  }, [fitToView, interactive, project.cameraPreset, viewMode, viewport]);
 
   useEffect(() => {
-    if (!viewport) return;
+    if (!viewport || !interactive) return;
     const offHover = viewport.picking.onHover((hit: PickHit | null) => {
       const data = sceneDataRef.current;
       if (!data || hit?.id !== "fold-edges") {
@@ -401,34 +437,37 @@ export function ViewportPane({
       offHover();
       offPick();
     };
-  }, [model, viewport]);
+  }, [interactive, model, viewport]);
 
   useEffect(() => {
     if (!viewport || !model) {
-      onSceneObject(null);
+      onSceneObject?.(null);
       return;
     }
     const data = buildFoldScene({
       model,
-      projection: project.viewMode === "2d" ? "flat-2d" : "folded-3d",
+      projection: viewMode === "2d" ? "flat-2d" : "folded-3d",
       foldStepIndex,
       foldAngle,
       thicknessMm: project.thicknessMm,
-      panelColorMode: frontArtworkTexture ? "artwork" : "material",
-      edgeColorMode: project.renderMode === "technical" ? "black" : "mountain-valley",
+      thicknessOffsetDirection,
+      panelColorMode,
+      edgeColorMode,
       selectedFaceIndex,
-      foldPositions: foldPlayback.positions ?? activeSettlement?.positions,
+      foldPositions: foldPlayback.positions ?? settlement?.positions,
       foldMaxEdgeError: foldPlayback.positions
         ? foldPlayback.solverMaxEdgeError
-        : activeSettlement?.maxEdgeError,
+        : settlement?.maxEdgeError,
       foldMaxAngleErrorDeg: foldPlayback.positions
         ? foldPlayback.solverMaxAngleErrorDeg
-        : activeSettlement?.maxAngleErrorDeg,
+        : settlement?.maxAngleErrorDeg,
     });
     sceneDataRef.current = data;
 
     const materialDefinition = materials[project.material];
     const technical = project.renderMode === "technical";
+    const showArtwork = panelColorMode === "artwork";
+    const useFaceColors = panelColorMode === "multicolor";
     // Keep the legacy handedness split exactly: flat-2D mirrors the front atlas,
     // folded-3D does not; the BackSide rasterization supplies the reverse-face
     // flip, so its texture is never pre-mirrored.
@@ -443,58 +482,47 @@ export function ViewportPane({
       applyArtworkPlacement(
         placedFrontArtworkTexture,
         project.artwork,
-        project.viewMode === "2d",
+        viewMode === "2d",
       );
     }
     if (placedBackArtworkTexture) {
       applyArtworkPlacement(placedBackArtworkTexture, project.artwork, false);
     }
-    const frontMaterial = new MeshStandardMaterial({
-      color: new Color(
-        technical
-          ? "#f1f1f1"
-          : placedFrontArtworkTexture
-            ? project.artworkColor
-            : materialTexture ? "#ffffff" : materialDefinition.color,
-      ),
-      map: technical ? null : placedFrontArtworkTexture ?? materialTexture,
-      roughness: technical ? 0.96 : materialDefinition.roughness,
-      metalness: technical ? 0 : materialDefinition.metalness,
-      vertexColors: !technical,
-      wireframe: technical,
-      side: technical || project.viewMode === "2d" ? DoubleSide : FrontSide,
-    });
-    const backMaterial = frontMaterial.clone();
-    backMaterial.map = technical
-      ? null
-      : project.viewMode === "2d"
-        ? placedFrontArtworkTexture ?? materialTexture
-        : placedBackArtworkTexture ?? materialTexture;
-    if (!technical) {
-      if (!placedBackArtworkTexture) backMaterial.color.offsetHSL(0, -0.05, -0.08);
-      backMaterial.side = project.viewMode === "2d" ? DoubleSide : BackSide;
-    }
-    const edgeMaterial = new MeshStandardMaterial({
-      color: technical ? "#f1f1f1" : materialTexture ? "#ffffff" : "#87643e",
-      map: technical ? null : materialTexture,
-      roughness: technical ? 0.96 : 0.92,
-      metalness: 0,
-      wireframe: technical,
-      side: technical ? DoubleSide : undefined,
+    const [frontMaterial, backMaterial, edgeMaterial] = createFoldSceneMaterials({
+      viewMode,
+      technical,
+      showArtwork,
+      useFaceColors,
+      frontArtworkTexture: placedFrontArtworkTexture,
+      backArtworkTexture: placedBackArtworkTexture,
+      edgeTexture: materialTexture,
+      edgeFallbackColor: materialDefinition.color,
     });
     const mesh = new Mesh(data.geometry, [frontMaterial, backMaterial, edgeMaterial]);
-    mesh.castShadow = project.viewMode === "3d";
+    mesh.castShadow = showShadow && viewMode === "3d";
     mesh.receiveShadow = true;
 
-    const solidMaterial = new LineBasicMaterial({ vertexColors: true });
-    const dashedMaterial = new LineDashedMaterial({
-      vertexColors: true,
-      dashSize: 0.055,
-      gapSize: 0.035,
+    const solidEdges = createFatEdges(data.solidEdgeGeometry, viewport, {
+      linewidth: 1.9,
+      depthTest: viewMode !== "2d",
     });
-    const solidLines = new LineSegments(data.solidEdgeGeometry, solidMaterial);
-    const dashedLines = new LineSegments(data.dashedEdgeGeometry, dashedMaterial);
-    dashedLines.computeLineDistances();
+    const dashedEdges = createFatEdges(data.dashedEdgeGeometry, viewport, {
+      dashed: true,
+      linewidth: 1.7,
+      depthTest: viewMode !== "2d",
+    });
+    const updateDashScale = (): void => {
+      if (viewMode !== "2d") return;
+      const zoom = viewport.camera.getState().zoom;
+      const scale = 100 / Math.max(zoom, 0.0001);
+      dashedEdges.material.dashSize = 0.05 * scale;
+      dashedEdges.material.gapSize = 0.03 * scale;
+    };
+    updateDashScale();
+    const offCameraChange = viewport.camera.onChange(() => {
+      updateDashScale();
+      viewport.invalidate();
+    });
     const edgePickMaterial = new LineBasicMaterial({
       transparent: true,
       opacity: 0,
@@ -534,42 +562,49 @@ export function ViewportPane({
     group.name = "PackCAD folded package";
     group.add(
       mesh,
-      solidLines,
-      dashedLines,
+      solidEdges.line,
+      dashedEdges.line,
       edgePickLines,
       selectedLine,
       hoverLine,
     );
     viewport.scene.add(group);
     sceneObjectRef.current = group;
-    viewport.picking.register(mesh, "fold-shell", "face", ["face"]);
-    viewport.picking.register(edgePickLines, "fold-edges", "crease", ["edge"]);
+    if (interactive) {
+      viewport.picking.register(mesh, "fold-shell", "face", ["face"]);
+      viewport.picking.register(edgePickLines, "fold-edges", "crease", ["edge"]);
+    }
     const autoFit = autoFitRef.current;
-    if (!autoFit || autoFit.model !== model || autoFit.viewMode !== project.viewMode) {
-      autoFitRef.current = { model, viewMode: project.viewMode };
+    if (!autoFit || autoFit.model !== model || autoFit.viewMode !== viewMode) {
+      autoFitRef.current = { model, viewMode };
       viewport.camera.fit(
         new Box3().setFromObject(group),
-        project.viewMode === "2d" ? 1.08 : 1.35,
+        viewMode === "2d" ? 1.08 : compact ? 1.55 : 1.35,
       );
     }
     viewport.invalidate();
-    onSceneObject(group);
+    onSceneObject?.(group);
 
     return () => {
-      onSceneObject(null);
+      onSceneObject?.(null);
       if (sceneObjectRef.current === group) sceneObjectRef.current = null;
       if (selectedLineRef.current === selectedLine) selectedLineRef.current = null;
       if (hoverLineRef.current === hoverLine) hoverLineRef.current = null;
-      viewport.picking.unregister(mesh);
-      viewport.picking.unregister(edgePickLines);
+      if (interactive) {
+        viewport.picking.unregister(mesh);
+        viewport.picking.unregister(edgePickLines);
+      }
+      offCameraChange();
       viewport.scene.remove(group);
       frontMaterial.dispose();
       backMaterial.dispose();
       edgeMaterial.dispose();
       placedFrontArtworkTexture?.dispose();
       placedBackArtworkTexture?.dispose();
-      solidMaterial.dispose();
-      dashedMaterial.dispose();
+      solidEdges.geometry.dispose();
+      solidEdges.material.dispose();
+      dashedEdges.geometry.dispose();
+      dashedEdges.material.dispose();
       edgePickMaterial.dispose();
       selectedLineMaterial.dispose();
       hoverLineMaterial.dispose();
@@ -580,24 +615,29 @@ export function ViewportPane({
       viewport.invalidate();
     };
   }, [
-    activeSettlement,
     backArtworkTexture,
+    compact,
+    edgeColorMode,
     foldAngle,
     foldPlayback.positions,
     foldPlayback.solverMaxAngleErrorDeg,
     foldPlayback.solverMaxEdgeError,
     foldStepIndex,
     frontArtworkTexture,
+    interactive,
     materialTexture,
     model,
     onSceneObject,
+    panelColorMode,
     project.material,
     project.artwork,
-    project.artworkColor,
     project.renderMode,
     project.thicknessMm,
-    project.viewMode,
     selectedFaceIndex,
+    settlement,
+    showShadow,
+    thicknessOffsetDirection,
+    viewMode,
     viewport,
   ]);
 
@@ -628,70 +668,19 @@ export function ViewportPane({
   }, [hoveredFoldEdgeIndex, viewport]);
 
   return (
-    <section className="viewport-pane" aria-label="Package viewport">
+    <section
+      className={compact ? "viewport-pane compact" : "viewport-pane"}
+      aria-label={`${viewMode.toUpperCase()} package viewport`}
+      data-view-mode={viewMode}
+    >
       <ViewportCanvas
         className="viewport-canvas"
         options={{
-          projection: project.viewMode === "2d" ? "2d" : "3d",
-          postProcessing: project.viewMode === "3d",
+          projection: viewMode === "2d" ? "2d" : "3d",
+          postProcessing: FOLD_SCENE_POST_PROCESSING,
         }}
         onReady={handleReady}
       />
-      <div className="view-controls" aria-label="View controls">
-        <select
-          aria-label="Render mode"
-          value={project.renderMode}
-          onChange={(event) => onSetRenderMode(event.currentTarget.value as RenderMode)}
-        >
-          <option value="solid">Solid</option>
-          <option value="technical">Technical</option>
-        </select>
-        <div className="view-control-group" aria-label="Camera preset">
-          {(["isometric", "front", "top"] as const).map((preset) => (
-            <button
-              type="button"
-              className={project.cameraPreset === preset ? "active" : ""}
-              onClick={() => onSetCamera(preset)}
-              title={`${preset} camera`}
-              key={preset}
-            >
-              {preset === "isometric" ? "Iso" : preset === "front" ? "Front" : "Top"}
-            </button>
-          ))}
-        </div>
-        <div className="view-control-group" aria-label="Camera projection">
-          {(["orthographic", "perspective"] as const).map((kind) => (
-            <button
-              type="button"
-              className={
-                (project.viewMode === "2d" ? "orthographic" : project.projection) === kind
-                  ? "active"
-                  : ""
-              }
-              onClick={() => onSetProjection(kind)}
-              disabled={project.viewMode === "2d"}
-              title={`${kind} camera`}
-              key={kind}
-            >
-              {kind === "orthographic" ? "Ortho" : "Persp"}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          className={project.showHelpers ? "active" : ""}
-          onClick={() => onSetHelpers(!project.showHelpers)}
-          aria-pressed={project.showHelpers}
-        >
-          Helpers
-        </button>
-        <button type="button" onClick={fitToView}>Fit</button>
-      </div>
-      <div className="viewport-hint">
-        {project.viewMode === "3d"
-          ? "Orbit · scroll to zoom · click a face or crease"
-          : "Pan · scroll to zoom · click a face or crease"}
-      </div>
     </section>
   );
 }

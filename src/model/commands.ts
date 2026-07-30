@@ -91,7 +91,17 @@ export function createCommandRegistry(): CommandRegistry<PackagingProject> {
   add(command<Partial<PackagingProject["artwork"]>>(
     "artwork.setPlacement",
     "Move artwork",
-    ["x", "y", "scale", "rotation", "imageDataUrl", "imageName", "panelIndex"],
+    [
+      "x",
+      "y",
+      "scale",
+      "rotation",
+      "imageDataUrl",
+      "imageName",
+      "backImageDataUrl",
+      "backImageName",
+      "panelIndex",
+    ],
     setArtworkPlacement,
   ));
   add(command("artwork.resetPlacement", "Reset artwork placement", [], resetArtworkPlacement));

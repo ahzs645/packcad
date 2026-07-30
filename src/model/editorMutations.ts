@@ -99,6 +99,12 @@ export function setArtworkPlacement(
       imageName: placement.imageName === undefined
         ? project.artwork.imageName
         : placement.imageName,
+      backImageDataUrl: placement.backImageDataUrl === undefined
+        ? project.artwork.backImageDataUrl
+        : placement.backImageDataUrl,
+      backImageName: placement.backImageName === undefined
+        ? project.artwork.backImageName
+        : placement.backImageName,
       panelIndex: placement.panelIndex === undefined
         ? project.artwork.panelIndex
         : placement.panelIndex,

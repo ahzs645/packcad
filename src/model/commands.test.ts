@@ -65,12 +65,12 @@ describe("PackCAD editor integration", () => {
 
     expect(editor.execute("view.setRenderMode", { renderMode: "technical" }).ok).toBe(true);
     expect(editor.execute("view.setCamera", { cameraPreset: "front" }).ok).toBe(true);
-    expect(editor.execute("view.setProjection", { projection: "orthographic" }).ok).toBe(true);
+    expect(editor.execute("view.setProjection", { projection: "perspective" }).ok).toBe(true);
     expect(editor.execute("view.setHelpers", { showHelpers: false }).ok).toBe(true);
     expect(editor.content).toMatchObject({
       renderMode: "technical",
       cameraPreset: "front",
-      projection: "orthographic",
+      projection: "perspective",
       showHelpers: false,
     });
     expect(editor.undoLabel).toBe("Set helper visibility");
@@ -78,9 +78,9 @@ describe("PackCAD editor integration", () => {
     editor.undo();
     expect(editor.content.showHelpers).toBe(true);
     editor.undo();
-    expect(editor.content.projection).toBe("perspective");
-    editor.redo();
     expect(editor.content.projection).toBe("orthographic");
+    editor.redo();
+    expect(editor.content.projection).toBe("perspective");
     editor.dispose();
   });
 
@@ -90,11 +90,14 @@ describe("PackCAD editor integration", () => {
       { registry: createCommandRegistry() },
     );
     const imageDataUrl = "data:image/png;base64,cGFja2NhZA==";
+    const backImageDataUrl = "data:image/png;base64,aW50ZXJpb3I=";
 
     expect(editor.execute("artwork.setColor", { artworkColor: "#aabbcc" }).ok).toBe(true);
     expect(editor.execute("artwork.setPlacement", {
       imageDataUrl,
       imageName: "mark.png",
+      backImageDataUrl,
+      backImageName: "interior.png",
       panelIndex: 2,
       x: 0.35,
       y: -0.2,
@@ -106,6 +109,8 @@ describe("PackCAD editor integration", () => {
       artwork: {
         imageDataUrl,
         imageName: "mark.png",
+        backImageDataUrl,
+        backImageName: "interior.png",
         panelIndex: 2,
         x: 0.35,
         y: -0.2,
@@ -118,6 +123,8 @@ describe("PackCAD editor integration", () => {
     expect(editor.content.artwork).toMatchObject({
       imageDataUrl,
       imageName: "mark.png",
+      backImageDataUrl,
+      backImageName: "interior.png",
       panelIndex: 2,
       x: 0,
       y: 0,

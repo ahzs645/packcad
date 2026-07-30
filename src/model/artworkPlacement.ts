@@ -16,10 +16,10 @@ export type ArtworkImageSources = {
 };
 
 export function artworkImageSources(project: PackagingProject): ArtworkImageSources {
-  if (project.artwork.imageDataUrl) {
+  if (project.artwork.imageDataUrl || project.artwork.backImageDataUrl) {
     return {
-      front: project.artwork.imageDataUrl,
-      back: project.artwork.imageDataUrl,
+      front: project.artwork.imageDataUrl ?? project.artwork.backImageDataUrl ?? null,
+      back: project.artwork.backImageDataUrl ?? project.artwork.imageDataUrl ?? null,
     };
   }
   const sourceArtwork = getEnabledSourceArtwork(project.design);

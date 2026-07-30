@@ -108,7 +108,7 @@ describe("project document persistence", () => {
     store.autosaveWrites.length = 0;
     editor.execute("material.setThickness", { thicknessMm: 2 });
     await vi.advanceTimersByTimeAsync(100);
-    editor.execute("view.setProjection", { projection: "orthographic" });
+    editor.execute("view.setProjection", { projection: "perspective" });
     await vi.advanceTimersByTimeAsync(179);
     expect(store.autosaveWrites).toHaveLength(0);
 
@@ -116,7 +116,7 @@ describe("project document persistence", () => {
     expect(store.autosaveWrites).toHaveLength(1);
     expect(store.autosaveWrites[0]).toMatchObject({
       thicknessMm: 2,
-      projection: "orthographic",
+      projection: "perspective",
     });
     expect(states).toEqual(["saving", "saving", "saved"]);
 
@@ -169,6 +169,8 @@ describe("project document persistence", () => {
         ...createMailerBoxProject().artwork,
         imageDataUrl: "data:image/png;base64,cGVyc2lzdGVkLWFydHdvcms=",
         imageName: "persisted-artwork.png",
+        backImageDataUrl: "data:image/png;base64,aW50ZXJpb3ItYXJ0d29yaw==",
+        backImageName: "persisted-interior.png",
         panelIndex: 1,
       },
     };
@@ -179,6 +181,8 @@ describe("project document persistence", () => {
     expect(roundTripped.artwork).toMatchObject({
       imageDataUrl: "data:image/png;base64,cGVyc2lzdGVkLWFydHdvcms=",
       imageName: "persisted-artwork.png",
+      backImageDataUrl: "data:image/png;base64,aW50ZXJpb3ItYXJ0d29yaw==",
+      backImageName: "persisted-interior.png",
       panelIndex: 1,
     });
     expect(roundTripped.foldModel?.verticesCoords.length).toBeGreaterThan(0);

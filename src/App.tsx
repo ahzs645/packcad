@@ -3,51 +3,76 @@ import {
   makeUid,
   type LocalDocumentMetadata,
 } from "@atelier/core";
-import {
-  toDXF,
-  toHPGL,
-  toSVG,
-  toTiledPDF,
-} from "@atelier/io";
+import { toDXF, toHPGL, toSVG, toTiledPDF } from "@atelier/io";
 import { downloadBlob, downloadText, toPNG } from "@atelier/io/browser";
 import { toGLTF } from "@atelier/io/three";
 import { useEditor } from "@atelier/react";
 import { createMailerBoxProject } from "@packcad/fold-solver";
-import type { PackagingProject } from "@packcad/format";
+import type {
+  PackagingProject,
+  PanelId,
+} from "@packcad/format";
+import { materialCatalog } from "@packcad/format";
 import type { Object3D } from "three";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArtworkPanel } from "./components/ArtworkPanel";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { packCadLogo } from "./assets/sourceChrome";
 import { Inspector } from "./components/Inspector";
-import { MaterialPanel } from "./components/MaterialPanel";
-import { OperationPipelinePanel } from "./components/OperationPipelinePanel";
-import { Toolbar } from "./components/Toolbar";
-import { ViewportPane } from "./components/ViewportPane";
+import { Icon } from "./components/Icon";
+import { PreferencesDialog } from "./components/PreferencesDialog";
+import { SourceSidebar } from "./components/SourceSidebar";
+import { Topbar, type OpenMenu } from "./components/Topbar";
+import { ViewportWorkspace } from "./components/ViewportWorkspace";
 import { foldModelToDrawing } from "./model/drawing";
 import { useFoldingPlayback } from "./model/foldingPlayback";
-import type { FoldDiagnostics } from "./render/foldSettlement";
 import {
-  createFoldStatusHost,
-  type FoldStatusState,
-} from "./render/foldStatus";
+  defaultUiPreferences,
+  loadUiPreferences,
+  modeForSingleLayout,
+  UI_PREFERENCES_STORAGE_KEY,
+  viewLayoutNotice,
+  type UiPreferences,
+  type ViewLayout,
+} from "./model/uiPreferences";
 import {
   bindProjectAutosave,
   createProjectEditor,
   type ProjectAutosaveBinding,
   type ProjectDocumentIdentity,
   type ProjectSaveState,
+  type ProjectSnapshot,
 } from "./persistence/projectDocuments";
+import {
+  createFoldStatusHost,
+  type FoldStatusState,
+} from "./render/foldStatus";
+import { useFoldSettlement } from "./render/useFoldSettlement";
 
 type ImportNotice = {
   kind: "success" | "error";
   message: string;
 };
 
-// Keep the initial Editor at module scope so React Strict Mode's development
-// effect rehearsal cannot dispose a still-live first session. Draft loads swap
-// in newly constructed Editors so each document receives an isolated History.
+function projectFromRoute(): ProjectSnapshot | null {
+  try {
+    const encoded = new URLSearchParams(window.location.hash.slice(1)).get(
+      "project",
+    );
+    if (!encoded) return null;
+    return JSON.parse(encoded) as ProjectSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+const routeProject = projectFromRoute();
 const initialEditor = createProjectEditor(
-  createMailerBoxProject(),
-  { name: "Mailer Box" },
+  routeProject ?? createMailerBoxProject(),
+  { name: routeProject ? "Shared PackCAD project" : "Mailer Box" },
 );
 const documentStore = new LocalDocumentStore<PackagingProject>({
   dbName: "packcad-documents",
@@ -64,22 +89,40 @@ export default function App() {
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [saveState, setSaveState] = useState<ProjectSaveState>("saved");
   const [restoredDraftName, setRestoredDraftName] = useState<string | null>(null);
-  const autosaveRef = useRef<ProjectAutosaveBinding | null>(null);
-  const foldingPlayback = useFoldingPlayback(state.content);
+  const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
+  const [notice, setNotice] = useState("Ready");
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [mobileNoticeVisible, setMobileNoticeVisible] = useState(true);
+  const [openSection, setOpenSection] = useState<"material" | "artwork" | null>(
+    null,
+  );
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [preferences, setPreferences] = useState<UiPreferences>(
+    loadUiPreferences,
+  );
+  const [fitNonce, setFitNonce] = useState(0);
   const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null);
-  const [selectedFoldEdgeIndex, setSelectedFoldEdgeIndex] = useState<number | null>(null);
-  const [hoveredFoldEdgeIndex, setHoveredFoldEdgeIndex] = useState<number | null>(null);
+  const [selectedFoldEdgeIndex, setSelectedFoldEdgeIndex] = useState<
+    number | null
+  >(null);
+  const [hoveredFoldEdgeIndex, setHoveredFoldEdgeIndex] = useState<
+    number | null
+  >(null);
   const [sceneObject, setSceneObject] = useState<Object3D | null>(null);
-  const [foldDiagnostics, setFoldDiagnostics] = useState<FoldDiagnostics>({
-    status: "settling",
-  });
   const [foldStatus, setFoldStatus] = useState<FoldStatusState>({
     status: "idle",
   });
-  const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
-  const handleSceneObject = useCallback((object: Object3D | null): void => {
-    setSceneObject(object);
-  }, []);
+  const autosaveRef = useRef<ProjectAutosaveBinding | null>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
+  const menuDielineInputRef = useRef<HTMLInputElement>(null);
+  const autoplayEditorRef = useRef<typeof initialEditor | null>(null);
+  const foldingPlayback = useFoldingPlayback(state.content);
+  const sharedSettlement = useFoldSettlement(
+    foldingPlayback.displayedProject,
+    foldingPlayback.player,
+  );
 
   const refreshDrafts = useCallback(async (): Promise<void> => {
     setDrafts(await documentStore.list());
@@ -95,32 +138,317 @@ export default function App() {
     setSelectedFaceIndex(null);
     setSelectedFoldEdgeIndex(null);
     setHoveredFoldEdgeIndex(null);
+    setSceneObject(null);
   }, []);
 
-  const handleSelectFace = useCallback((faceIndex: number | null): void => {
-    setSelectedFaceIndex(faceIndex);
-    if (faceIndex !== null) setSelectedFoldEdgeIndex(null);
+  const updatePreferences = useCallback((
+    patch: Partial<UiPreferences>,
+  ): void => {
+    setPreferences((current) => {
+      const next = { ...current, ...patch };
+      window.localStorage.setItem(
+        UI_PREFERENCES_STORAGE_KEY,
+        JSON.stringify(next),
+      );
+      return next;
+    });
   }, []);
 
-  const handleSelectFoldEdge = useCallback((edgeIndex: number | null): void => {
-    setSelectedFoldEdgeIndex(edgeIndex);
-    if (edgeIndex !== null) setSelectedFaceIndex(null);
-  }, []);
+  const applyViewLayout = useCallback((layout: ViewLayout): void => {
+    updatePreferences({ viewLayout: layout });
+    const mode = modeForSingleLayout(layout);
+    if (mode) state.execute("view.setMode", { viewMode: mode });
+    setNotice(viewLayoutNotice(layout));
+  }, [state.execute, updatePreferences]);
+
+  const updatePreferencesAndProject = useCallback((
+    patch: Partial<UiPreferences>,
+  ): void => {
+    updatePreferences(patch);
+    if (patch.cameraType) {
+      state.execute("view.setProjection", {
+        projection: patch.cameraType,
+      });
+    }
+    if (patch.fluteSize) {
+      const flute = /^([A-Z])\s+Flute$/i.exec(patch.fluteSize)?.[1];
+      const specId = flute
+        ? `MATERIAL_CORRUGATED_CARDBOARD_${flute.toUpperCase()}_FLUTE`
+        : null;
+      if (specId && materialCatalog[specId]) {
+        state.execute("material.selectSpec", { specId });
+      }
+    }
+  }, [state.execute, updatePreferences]);
+
+  const selectMaterialSpec = useCallback((specId: string): void => {
+    state.execute("material.selectSpec", { specId });
+    const flute = materialCatalog[specId]?.subType?.match(
+      /_([A-Z])_FLUTE$/,
+    )?.[1];
+    if (flute) updatePreferences({ fluteSize: `${flute} Flute` });
+    setNotice(`Selected ${materialCatalog[specId]?.label ?? "material"}`);
+  }, [state.execute, updatePreferences]);
+
+  const startFresh = useCallback(async (
+    flushCurrent = true,
+  ): Promise<void> => {
+    try {
+      if (flushCurrent) await autosaveRef.current?.flush();
+      const commandEditor = createProjectEditor(editor.content);
+      const result = commandEditor.execute("project.new");
+      const snapshot = commandEditor.content;
+      commandEditor.dispose();
+      if (!result.ok) {
+        throw new Error(result.error ?? "Could not create a project.");
+      }
+      const identity = {
+        id: makeUid("doc"),
+        name: "Untitled project",
+      };
+      await documentStore.save(identity.id, identity.name, snapshot);
+      replaceEditor(createProjectEditor(snapshot, identity));
+      setActiveDocument(identity);
+      setRestoredDraftName(null);
+      setSaveState("saved");
+      setNotice("Started a new project");
+      window.history.replaceState(null, "", window.location.pathname);
+      await refreshDrafts();
+    } catch (error) {
+      setSaveState("error");
+      setImportNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? error.message
+          : "Could not create a project.",
+      });
+    }
+  }, [editor.content, refreshDrafts, replaceEditor]);
+
+  const openDraft = useCallback(async (
+    metadata: LocalDocumentMetadata,
+  ): Promise<void> => {
+    try {
+      await autosaveRef.current?.flush();
+      const snapshot = await documentStore.load(metadata.id);
+      if (!snapshot) throw new Error(`Draft “${metadata.name}” is unavailable.`);
+      replaceEditor(createProjectEditor(snapshot, metadata));
+      setActiveDocument({ id: metadata.id, name: metadata.name });
+      setRestoredDraftName(null);
+      setSaveState("saved");
+      setNotice(`Loaded local draft: ${metadata.name}`);
+    } catch (error) {
+      setSaveState("error");
+      setImportNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? error.message
+          : "Could not open the draft.",
+      });
+    }
+  }, [replaceEditor]);
+
+  const saveAs = useCallback(async (): Promise<void> => {
+    const requested = window.prompt("Draft name", activeDocument.name);
+    const name = requested?.trim();
+    if (!name) return;
+    try {
+      await autosaveRef.current?.flush();
+      const identity = { id: makeUid("doc"), name };
+      await documentStore.save(identity.id, identity.name, editor.content);
+      replaceEditor(createProjectEditor(editor.content, identity));
+      setActiveDocument(identity);
+      setSaveState("saved");
+      setNotice(`Saved local draft: ${name}`);
+      await refreshDrafts();
+    } catch {
+      setSaveState("error");
+    }
+  }, [
+    activeDocument.name,
+    editor.content,
+    refreshDrafts,
+    replaceEditor,
+  ]);
+
+  const saveDraft = useCallback(async (): Promise<void> => {
+    try {
+      await autosaveRef.current?.flush();
+      setSaveState("saved");
+      setNotice(`Saved local draft: ${activeDocument.name}`);
+      await refreshDrafts();
+    } catch {
+      setSaveState("error");
+    }
+  }, [activeDocument.name, refreshDrafts]);
+
+  const deleteDraft = useCallback(async (
+    metadata: LocalDocumentMetadata,
+  ): Promise<void> => {
+    if (!window.confirm(`Delete “${metadata.name}”? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      if (metadata.id === activeDocument.id) {
+        autosaveRef.current?.dispose();
+        autosaveRef.current = null;
+      }
+      await documentStore.delete(metadata.id);
+      if (metadata.id === activeDocument.id) await startFresh(false);
+      else await refreshDrafts();
+      setNotice("Deleted local draft");
+    } catch {
+      setSaveState("error");
+    }
+  }, [activeDocument.id, refreshDrafts, startFresh]);
+
+  const importDielineFile = useCallback(async (file: File): Promise<void> => {
+    setImportNotice(null);
+    try {
+      const text = await file.text();
+      const result = state.execute("project.importDieline", {
+        fileName: file.name,
+        text,
+      });
+      if (!result.ok) {
+        throw new Error(result.error ?? "The dieline could not be imported.");
+      }
+      setSelectedFaceIndex(null);
+      setSelectedFoldEdgeIndex(null);
+      setNotice(`Imported dieline: ${file.name}`);
+      setImportNotice({
+        kind: "success",
+        message: `Imported dieline: ${file.name}`,
+      });
+    } catch (error) {
+      setImportNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? `Could not import ${file.name}: ${error.message}`
+          : `Could not import ${file.name}.`,
+      });
+    }
+  }, [state.execute]);
+
+  const openProjectFile = useCallback(async (file: File): Promise<void> => {
+    try {
+      await autosaveRef.current?.flush();
+      const snapshot = JSON.parse(await file.text()) as ProjectSnapshot;
+      const identity = {
+        id: makeUid("doc"),
+        name: file.name.replace(/\.packcad(?:\.json)?$|\.json$/i, ""),
+      };
+      const nextEditor = createProjectEditor(snapshot, identity);
+      await documentStore.save(identity.id, identity.name, nextEditor.content);
+      replaceEditor(nextEditor);
+      setActiveDocument(identity);
+      setSaveState("saved");
+      setNotice(`Opened project: ${file.name}`);
+      await refreshDrafts();
+    } catch (error) {
+      setImportNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? `Could not open ${file.name}: ${error.message}`
+          : `Could not open ${file.name}.`,
+      });
+    }
+  }, [refreshDrafts, replaceEditor]);
+
+  const saveProjectFile = useCallback((): void => {
+    downloadText(
+      "packcad-project.packcad.json",
+      JSON.stringify(editor.content, null, 2),
+      "application/json",
+    );
+    setNotice("Saved project document");
+  }, [editor.content]);
+
+  const copyProjectUrl = useCallback(async (): Promise<void> => {
+    const params = new URLSearchParams();
+    params.set("project", JSON.stringify(editor.content));
+    const url = `${window.location.origin}${window.location.pathname}#${params}`;
+    window.history.replaceState(null, "", url);
+    try {
+      await window.navigator.clipboard?.writeText(url);
+      setNotice("Copied project URL");
+    } catch {
+      setNotice("Project URL is in the address bar");
+    }
+  }, [editor.content]);
+
+  const exportProject = useCallback(async (
+    format: "svg" | "gltf" | "dxf" | "hpgl" | "pdf" | "png",
+  ): Promise<void> => {
+    const model = state.content.foldModel;
+    if (!model) {
+      setNotice("Import a fold model before exporting");
+      return;
+    }
+    if (format === "gltf") {
+      if (!sceneObject) {
+        setNotice("Switch to the 3D view before exporting");
+        return;
+      }
+      const exportObject = sceneObject.children.find(
+        (child) => child.type === "Mesh",
+      ) ?? sceneObject;
+      const gltf = await toGLTF(exportObject);
+      if (gltf instanceof ArrayBuffer) {
+        downloadBlob(
+          "packcad-model.glb",
+          new Blob([gltf], { type: "model/gltf-binary" }),
+        );
+      } else {
+        downloadText(
+          "packcad-model.gltf",
+          JSON.stringify(gltf, null, 2),
+          "model/gltf+json",
+        );
+      }
+      setNotice("Exported 3D model");
+      return;
+    }
+    const drawing = foldModelToDrawing(model);
+    if (format === "svg") {
+      downloadText("packcad-dieline.svg", toSVG(drawing), "image/svg+xml");
+    }
+    if (format === "dxf") {
+      downloadText("packcad-dieline.dxf", toDXF(drawing), "application/dxf");
+    }
+    if (format === "hpgl") {
+      downloadText("packcad-dieline.hpgl", toHPGL(drawing));
+    }
+    if (format === "pdf") {
+      const bytes = Uint8Array.from(toTiledPDF(drawing));
+      downloadBlob(
+        "packcad-dieline-tiled.pdf",
+        new Blob([bytes], { type: "application/pdf" }),
+      );
+    }
+    if (format === "png") {
+      const blob = await toPNG(drawing);
+      if (blob) downloadBlob("packcad-dieline.png", blob);
+    }
+    setNotice(`Exported ${format.toUpperCase()}`);
+  }, [sceneObject, state.content.foldModel]);
 
   useEffect(() => {
     let cancelled = false;
     void documentStore.list().then(async (listed) => {
       if (cancelled) return;
-      const recent = listed[0];
       let restored = false;
-      if (recent) {
-        const snapshot = await documentStore.load(recent.id);
-        if (cancelled) return;
-        if (snapshot) {
-          replaceEditor(createProjectEditor(snapshot, recent));
-          setActiveDocument({ id: recent.id, name: recent.name });
-          setRestoredDraftName(recent.name);
-          restored = true;
+      if (!routeProject) {
+        const recent = listed[0];
+        if (recent) {
+          const snapshot = await documentStore.load(recent.id);
+          if (cancelled) return;
+          if (snapshot) {
+            replaceEditor(createProjectEditor(snapshot, recent));
+            setActiveDocument({ id: recent.id, name: recent.name });
+            setRestoredDraftName(recent.name);
+            restored = true;
+          }
         }
       }
       if (!restored) {
@@ -131,10 +459,8 @@ export default function App() {
         );
         if (cancelled) return;
       }
-      const nextDrafts = await documentStore.list();
-      if (cancelled) return;
-      setDrafts(nextDrafts);
-      setPersistenceReady(true);
+      setDrafts(await documentStore.list());
+      if (!cancelled) setPersistenceReady(true);
     }).catch(() => {
       if (cancelled) return;
       setSaveState("error");
@@ -157,29 +483,54 @@ export default function App() {
       },
     );
     autosaveRef.current = binding;
-    const handleBeforeUnload = (): void => {
+    const flush = (): void => {
       void binding.flush();
     };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    window.addEventListener("pagehide", handleBeforeUnload);
+    window.addEventListener("beforeunload", flush);
+    window.addEventListener("pagehide", flush);
     return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-      window.removeEventListener("pagehide", handleBeforeUnload);
+      window.removeEventListener("beforeunload", flush);
+      window.removeEventListener("pagehide", flush);
       if (autosaveRef.current === binding) autosaveRef.current = null;
       binding.dispose();
     };
   }, [activeDocument.id, editor, persistenceReady, refreshDrafts]);
 
   useEffect(() => {
+    if (!persistenceReady || autoplayEditorRef.current === editor) return;
+    autoplayEditorRef.current = editor;
+    foldingPlayback.play();
+  }, [editor, foldingPlayback, persistenceReady]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return;
-      event.preventDefault();
-      if (event.shiftKey) editor.redo();
-      else editor.undo();
+      const target = event.target;
+      const editing = target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement;
+      const command = event.metaKey || event.ctrlKey;
+      if (command && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) editor.redo();
+        else editor.undo();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveProjectFile();
+        return;
+      }
+      if (editing) return;
+      if (event.key === "2") applyViewLayout("single-2d");
+      if (event.key === "3") applyViewLayout("single-3d");
+      if (event.key === "Escape") {
+        setOpenMenu(null);
+        setPreferencesOpen(false);
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editor]);
+  }, [applyViewLayout, editor, saveProjectFile]);
 
   useEffect(() => {
     const model = state.content.foldModel;
@@ -190,357 +541,365 @@ export default function App() {
     let cancelled = false;
     let activeHost: Awaited<ReturnType<typeof createFoldStatusHost>> | null = null;
     setFoldStatus({ status: "solving" });
-    void createFoldStatusHost(model)
-      .then(async (host) => {
-        activeHost = host;
-        if (cancelled) {
-          host.dispose();
-          return;
-        }
-        const summary = await host.solve("summary");
-        if (!cancelled) setFoldStatus({ status: "ready", summary });
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setFoldStatus({
-          status: "error",
-          message: error instanceof Error
-            ? error.message
-            : "Fold solve did not return a verdict.",
-        });
+    void createFoldStatusHost(model).then(async (host) => {
+      activeHost = host;
+      if (cancelled) {
+        host.dispose();
+        return;
+      }
+      const summary = await host.solve("summary");
+      if (!cancelled) setFoldStatus({ status: "ready", summary });
+    }).catch((error: unknown) => {
+      if (cancelled) return;
+      setFoldStatus({
+        status: "error",
+        message: error instanceof Error
+          ? error.message
+          : "Fold solve did not return a verdict.",
       });
+    });
     return () => {
       cancelled = true;
       activeHost?.dispose();
     };
   }, [state.content.foldModel]);
 
-  const exportProject = useCallback(async (
-    format: "svg" | "gltf" | "dxf" | "hpgl" | "pdf" | "png",
-  ): Promise<void> => {
-    const model = state.content.foldModel;
-    if (!model) return;
-    if (format === "gltf") {
-      if (!sceneObject) return;
-      // Crease guides are LineSegments and have no glTF PBR material analogue;
-      // the deliverable is the closed package shell, not viewport-only guides.
-      const exportObject = sceneObject.children.find((child) => child.type === "Mesh")
-        ?? sceneObject;
-      const gltf = await toGLTF(exportObject);
-      if (gltf instanceof ArrayBuffer) {
-        downloadBlob("mailer-box.glb", new Blob([gltf], { type: "model/gltf-binary" }));
-      } else {
-        downloadText("mailer-box.gltf", JSON.stringify(gltf, null, 2), "model/gltf+json");
-      }
-      return;
-    }
-    const drawing = foldModelToDrawing(model);
-    if (format === "svg") downloadText("mailer-box.svg", toSVG(drawing), "image/svg+xml");
-    if (format === "dxf") downloadText("mailer-box.dxf", toDXF(drawing), "application/dxf");
-    if (format === "hpgl") downloadText("mailer-box.hpgl", toHPGL(drawing));
-    if (format === "pdf") {
-      const bytes = Uint8Array.from(toTiledPDF(drawing));
-      downloadBlob("mailer-box-tiled.pdf", new Blob([bytes], { type: "application/pdf" }));
-    }
-    if (format === "png") {
-      const blob = await toPNG(drawing);
-      if (blob) downloadBlob("mailer-box.png", blob);
-    }
-  }, [sceneObject, state.content.foldModel]);
+  const pauseAndExecute = useCallback((
+    command: string,
+    params?: unknown,
+  ): void => {
+    foldingPlayback.pause();
+    state.execute(command, params);
+  }, [foldingPlayback, state]);
 
-  const importDielineFile = useCallback(async (file: File): Promise<void> => {
-    setImportNotice(null);
-    try {
-      const text = await file.text();
-      const result = state.execute("project.importDieline", {
-        fileName: file.name,
-        text,
-      });
-      if (!result.ok) {
-        throw new Error(result.error ?? "The dieline could not be imported.");
-      }
-      setSelectedFaceIndex(null);
-      setImportNotice({
-        kind: "success",
-        message: `Imported dieline: ${file.name}`,
-      });
-    } catch (error) {
-      setImportNotice({
-        kind: "error",
-        message: error instanceof Error
-          ? `Could not import ${file.name}: ${error.message}`
-          : `Could not import ${file.name}.`,
+  const selectStep = useCallback((stepId: string): void => {
+    foldingPlayback.pause();
+    setSelectedFaceIndex(null);
+    setSelectedFoldEdgeIndex(null);
+    setHoveredFoldEdgeIndex(null);
+    state.execute("fold.selectStep", { stepId });
+  }, [foldingPlayback, state]);
+
+  const setFoldAngle = useCallback((angle: number): void => {
+    foldingPlayback.pause();
+    if (state.content.activeStepId !== foldingPlayback.frame.activeStepId) {
+      state.execute("fold.selectStep", {
+        stepId: foldingPlayback.frame.activeStepId,
       });
     }
-  }, [state.execute]);
-
-  const startFresh = useCallback(async (
-    flushCurrent = true,
-  ): Promise<void> => {
-    try {
-      if (flushCurrent) await autosaveRef.current?.flush();
-      const commandEditor = createProjectEditor(editor.content);
-      const result = commandEditor.execute("project.new");
-      const snapshot = commandEditor.content;
-      commandEditor.dispose();
-      if (!result.ok) throw new Error(result.error ?? "Could not create a project.");
-
-      const identity = {
-        id: makeUid("doc"),
-        name: "Untitled project",
-      };
-      await documentStore.save(identity.id, identity.name, snapshot);
-      replaceEditor(createProjectEditor(snapshot, identity));
-      setActiveDocument(identity);
-      setRestoredDraftName(null);
-      setSaveState("saved");
-      await refreshDrafts();
-    } catch (error) {
-      setSaveState("error");
-      setImportNotice({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Could not create a project.",
-      });
-    }
-  }, [editor.content, refreshDrafts, replaceEditor]);
-
-  const openDraft = useCallback(async (
-    metadata: LocalDocumentMetadata,
-  ): Promise<void> => {
-    try {
-      await autosaveRef.current?.flush();
-      const snapshot = await documentStore.load(metadata.id);
-      if (!snapshot) throw new Error(`Draft “${metadata.name}” is unavailable.`);
-      replaceEditor(createProjectEditor(snapshot, metadata));
-      setActiveDocument({ id: metadata.id, name: metadata.name });
-      setRestoredDraftName(null);
-      setSaveState("saved");
-    } catch (error) {
-      setSaveState("error");
-      setImportNotice({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Could not open the draft.",
-      });
-    }
-  }, [replaceEditor]);
-
-  const saveAs = useCallback(async (): Promise<void> => {
-    const requested = window.prompt("Draft name", activeDocument.name);
-    const name = requested?.trim();
-    if (!name) return;
-    try {
-      await autosaveRef.current?.flush();
-      const identity = { id: makeUid("doc"), name };
-      await documentStore.save(identity.id, identity.name, editor.content);
-      setActiveDocument(identity);
-      setSaveState("saved");
-      await refreshDrafts();
-    } catch {
-      setSaveState("error");
-    }
-  }, [activeDocument.name, editor.content, refreshDrafts]);
-
-  const renameDraft = useCallback(async (): Promise<void> => {
-    const requested = window.prompt("Rename draft", activeDocument.name);
-    const name = requested?.trim();
-    if (!name || name === activeDocument.name) return;
-    try {
-      await autosaveRef.current?.flush();
-      await documentStore.save(activeDocument.id, name, editor.content);
-      setActiveDocument((current) => ({ ...current, name }));
-      setSaveState("saved");
-      await refreshDrafts();
-    } catch {
-      setSaveState("error");
-    }
-  }, [activeDocument, editor.content, refreshDrafts]);
-
-  const deleteDraft = useCallback(async (
-    metadata: LocalDocumentMetadata,
-  ): Promise<void> => {
-    if (!window.confirm(`Delete “${metadata.name}”? This cannot be undone.`)) return;
-    try {
-      if (metadata.id === activeDocument.id) {
-        autosaveRef.current?.dispose();
-        autosaveRef.current = null;
-      }
-      await documentStore.delete(metadata.id);
-      if (metadata.id === activeDocument.id) await startFresh(false);
-      else await refreshDrafts();
-    } catch {
-      setSaveState("error");
-    }
-  }, [activeDocument.id, refreshDrafts, startFresh]);
+    state.execute("fold.setAngle", { angle });
+  }, [foldingPlayback, state]);
 
   if (!persistenceReady) {
     return (
       <main className="app-loading" aria-live="polite">
-        <span className="brand-mark">P</span>
+        <img className="brand-logo" src={packCadLogo} alt="PackCAD logo" />
         <strong>Restoring local drafts…</strong>
       </main>
     );
   }
 
+  const displayedProject = foldingPlayback.displayedProject;
+
   return (
-    <main className="app-shell">
-      <Toolbar
-        documentName={activeDocument.name}
+    <div
+      className={
+        sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"
+      }
+      data-app="packcad-editable"
+      onClick={() => setOpenMenu(null)}
+    >
+      <SourceSidebar
+        project={state.content}
+        preferences={preferences}
+        frame={foldingPlayback.frame}
+        playing={foldingPlayback.player.playing}
+        foldStatus={foldStatus}
         drafts={drafts}
         activeDocumentId={activeDocument.id}
-        persistenceReady={persistenceReady}
-        saveState={saveState}
-        viewMode={state.content.viewMode}
-        canUndo={state.canUndo}
-        canRedo={state.canRedo}
-        undoLabel={state.undoLabel}
-        redoLabel={state.redoLabel}
-        onNew={() => void startFresh()}
-        onOpenDraft={(draft) => void openDraft(draft)}
-        onSaveAs={() => void saveAs()}
-        onRename={() => void renameDraft()}
-        onDeleteDraft={(draft) => void deleteDraft(draft)}
+        openSection={openSection}
+        onSetOpenSection={setOpenSection}
         onImport={(file) => void importDielineFile(file)}
-        onSetView={(viewMode) => state.execute("view.setMode", { viewMode })}
-        onUndo={state.undo}
-        onRedo={state.redo}
-        onExport={(format) => void exportProject(format)}
+        onSelectMaterialSpec={selectMaterialSpec}
+        onSetThickness={(thicknessMm) =>
+          state.execute("material.setThickness", { thicknessMm })}
+        onSetArtwork={(side, dataUrl, fileName) => {
+          state.execute("artwork.setPlacement", side === "front"
+            ? { imageDataUrl: dataUrl, imageName: fileName }
+            : { backImageDataUrl: dataUrl, backImageName: fileName });
+        }}
+        onFlipArtwork={() => state.execute("artwork.setPlacement", {
+          imageDataUrl: state.content.artwork.backImageDataUrl ?? null,
+          imageName: state.content.artwork.backImageName ?? null,
+          backImageDataUrl: state.content.artwork.imageDataUrl ?? null,
+          backImageName: state.content.artwork.imageName ?? null,
+        })}
+        onSetArtworkColor={(artworkColor) =>
+          state.execute("artwork.setColor", { artworkColor })}
+        onUpdatePreferences={updatePreferencesAndProject}
+        onSaveDraft={() => void saveDraft()}
+        onOpenDraft={(draft) => void openDraft(draft)}
+        onDeleteDraft={(draft) => void deleteDraft(draft)}
+        onTogglePlayback={
+          foldingPlayback.player.playing
+            ? foldingPlayback.pause
+            : foldingPlayback.play
+        }
+        onResetFold={() => {
+          pauseAndExecute("fold.reset");
+          setNotice("Reset folding simulation");
+        }}
+        onSelectStep={selectStep}
+        onAddKeyframe={() => {
+          pauseAndExecute(
+            state.content.design
+              ? "pipeline.addOrigamiKeyframe"
+              : "fold.appendStep",
+          );
+          setNotice("Added folding keyframe");
+        }}
       />
-      {restoredDraftName ? (
-        <div className="restore-notice" role="status">
-          <span>Restored “{restoredDraftName}”</span>
-          <button type="button" onClick={() => void startFresh()}>
-            Start fresh
-          </button>
-          <button
-            type="button"
-            aria-label="Dismiss restore notice"
-            onClick={() => setRestoredDraftName(null)}
-          >
-            ×
-          </button>
-        </div>
-      ) : null}
-      {importNotice ? (
-        <div
-          className={`import-notice ${importNotice.kind}`}
-          role={importNotice.kind === "error" ? "alert" : "status"}
-        >
-          {importNotice.message}
-        </div>
-      ) : null}
-      <div className="workspace">
-        <div className="left-rail">
-          <OperationPipelinePanel
-            project={state.content}
-            onToggleOperation={(operationId) =>
-              state.execute("pipeline.toggleOperation", { operationId })}
-          />
-          <MaterialPanel
-            project={state.content}
-            onSelect={(specId) => state.execute("material.selectSpec", { specId })}
-          />
-          <ArtworkPanel
-            project={state.content}
-            onSetColor={(artworkColor) =>
-              state.execute("artwork.setColor", { artworkColor })}
-            onSetPlacement={(placement) =>
-              state.execute("artwork.setPlacement", placement)}
-            onResetPlacement={() => state.execute("artwork.resetPlacement")}
-          />
-        </div>
-        <ViewportPane
-          project={foldingPlayback.displayedProject}
+
+      <main className="workspace">
+        <Topbar
+          openMenu={openMenu}
+          sidebarCollapsed={sidebarCollapsed}
+          inspectorOpen={inspectorOpen}
+          canUndo={state.canUndo}
+          canRedo={state.canRedo}
+          undoLabel={state.undoLabel}
+          redoLabel={state.redoLabel}
+          saveState={saveState}
+          drafts={drafts}
+          activeDocumentId={activeDocument.id}
+          preferences={preferences}
+          projection={state.content.projection}
+          onSetOpenMenu={setOpenMenu}
+          onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
+          onOpenPreferences={() => {
+            setOpenMenu(null);
+            setPreferencesOpen(true);
+          }}
+          onToggleInspector={() => setInspectorOpen((current) => !current)}
+          onNewProject={() => void startFresh()}
+          onOpenProject={() => projectInputRef.current?.click()}
+          onImportDieline={() => menuDielineInputRef.current?.click()}
+          onSaveProject={saveProjectFile}
+          onSaveDraft={() => void saveAs()}
+          onCopyProjectUrl={() => void copyProjectUrl()}
+          onOpenDraft={(draft) => void openDraft(draft)}
+          onDeleteDraft={(draft) => void deleteDraft(draft)}
+          onExport={(format) => void exportProject(format)}
+          onUndo={state.undo}
+          onRedo={state.redo}
+          onSetViewLayout={applyViewLayout}
+          onUpdatePreferences={updatePreferences}
+          onSetProjection={(projection) => {
+            state.execute("view.setProjection", { projection });
+            updatePreferences({ cameraType: projection });
+          }}
+        />
+        <input
+          ref={projectInputRef}
+          className="hidden-file"
+          type="file"
+          accept=".json,.packcad.json"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void openProjectFile(file);
+          }}
+        />
+        <input
+          ref={menuDielineInputRef}
+          className="hidden-file"
+          type="file"
+          accept=".svg,.dxf,.txt,.json"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void importDielineFile(file);
+          }}
+        />
+
+        <ViewportWorkspace
+          project={displayedProject}
           foldPlayback={foldingPlayback.player}
+          settlement={sharedSettlement.data}
+          preferences={preferences}
+          fitNonce={fitNonce}
+          notice={notice}
           selectedFaceIndex={selectedFaceIndex}
           selectedFoldEdgeIndex={selectedFoldEdgeIndex}
           hoveredFoldEdgeIndex={hoveredFoldEdgeIndex}
-          onSelectFace={handleSelectFace}
-          onSelectFoldEdge={handleSelectFoldEdge}
+          onSelectFace={(faceIndex) => {
+            setSelectedFaceIndex(faceIndex);
+            if (faceIndex !== null) setSelectedFoldEdgeIndex(null);
+          }}
+          onSelectFoldEdge={(edgeIndex) => {
+            setSelectedFoldEdgeIndex(edgeIndex);
+            if (edgeIndex !== null) setSelectedFaceIndex(null);
+          }}
           onHoverFoldEdge={setHoveredFoldEdgeIndex}
-          onSceneObject={handleSceneObject}
-          onFoldDiagnostics={setFoldDiagnostics}
-          onSetRenderMode={(renderMode) =>
-            state.execute("view.setRenderMode", { renderMode })}
-          onSetCamera={(cameraPreset) =>
-            state.execute("view.setCamera", { cameraPreset })}
-          onSetProjection={(projection) =>
-            state.execute("view.setProjection", { projection })}
-          onSetHelpers={(showHelpers) =>
-            state.execute("view.setHelpers", { showHelpers })}
+          onSceneObject={setSceneObject}
+          onSetViewLayout={applyViewLayout}
+          onFit={() => {
+            setFitNonce((current) => current + 1);
+            setNotice("Framed view");
+          }}
+          onToggleGridAxes={() => {
+            const next = !(preferences.groundPlane || preferences.origin);
+            updatePreferences({ groundPlane: next, origin: next });
+            state.execute("view.setHelpers", { showHelpers: next });
+            setNotice(next ? "Showed grid + axes" : "Hid grid + axes");
+          }}
+          onToggleShading={() => {
+            const renderMode = state.content.renderMode === "solid"
+              ? "technical"
+              : "solid";
+            state.execute("view.setRenderMode", { renderMode });
+            setNotice("Toggled shading");
+          }}
+          onResetCamera={() => {
+            state.execute("view.setCamera", { cameraPreset: "isometric" });
+            setFitNonce((current) => current + 1);
+            setNotice("Reset camera");
+          }}
         />
+
         <Inspector
-          project={foldingPlayback.displayedProject}
+          open={inspectorOpen}
+          project={displayedProject}
+          displayedActiveStepId={foldingPlayback.frame.activeStepId}
           selectedFaceIndex={selectedFaceIndex}
           selectedFoldEdgeIndex={selectedFoldEdgeIndex}
-          foldDiagnostics={foldDiagnostics}
+          foldDiagnostics={sharedSettlement.diagnostics}
           foldStatus={foldStatus}
-          foldPlaying={foldingPlayback.player.playing}
-          foldProgress={foldingPlayback.progress}
-          onToggleFoldPlayback={
-            foldingPlayback.player.playing
-              ? foldingPlayback.pause
-              : foldingPlayback.play
-          }
-          onSelectStep={(stepId) => {
-            foldingPlayback.pause();
-            setSelectedFaceIndex(null);
-            setSelectedFoldEdgeIndex(null);
-            setHoveredFoldEdgeIndex(null);
-            state.execute("fold.selectStep", { stepId });
-          }}
-          onSetAngle={(angle) => {
-            foldingPlayback.pause();
-            if (state.content.activeStepId !== foldingPlayback.frame.activeStepId) {
-              state.execute("fold.selectStep", {
-                stepId: foldingPlayback.frame.activeStepId,
-              });
-            }
-            state.execute("fold.setAngle", { angle });
-          }}
-          onSetThickness={(thicknessMm) =>
-            state.execute("material.setThickness", { thicknessMm })}
-          onSetFixedPanel={(panelId) =>
+          preferences={preferences}
+          onSetFixedPanel={(panelId: PanelId | null) =>
             state.execute("fold.setFixedPanel", { panelId })}
-          onAppendStep={() => {
-            foldingPlayback.pause();
-            state.execute("fold.appendStep");
-          }}
-          onResetFold={() => {
-            foldingPlayback.pause();
-            setSelectedFoldEdgeIndex(null);
-            state.execute("fold.reset");
-          }}
-          onAddOrigamiKeyframe={() => {
-            foldingPlayback.pause();
-            setSelectedFoldEdgeIndex(null);
-            state.execute("pipeline.addOrigamiKeyframe");
-          }}
-          onSetTargetAngle={(operationId, angleDegrees, groupIndex) => {
-            foldingPlayback.pause();
-            state.execute("pipeline.setTargetAngle", {
+          onRenameOperation={(operationId, name) =>
+            pauseAndExecute("pipeline.renameOperation", { operationId, name })}
+          onSetTargetAngle={(operationId, angleDegrees, groupIndex) =>
+            pauseAndExecute("pipeline.setTargetAngle", {
               operationId,
               angleDegrees,
               groupIndex,
-            });
-          }}
-          onSetEnforcePrior={(operationId, value) => {
-            foldingPlayback.pause();
-            state.execute("pipeline.enforcePrior", { operationId, value });
-          }}
-          onToggleLockedFace={(operationId, faceId) => {
-            foldingPlayback.pause();
-            state.execute("pipeline.toggleLockedFace", { operationId, faceId });
-          }}
-          onSetCreaseAngle={(operationId, edgeId, angleDegrees) => {
-            foldingPlayback.pause();
-            state.execute("pipeline.setCreaseAngle", {
+            })}
+          onSetEnforcePrior={(operationId, value) =>
+            pauseAndExecute("pipeline.enforcePrior", { operationId, value })}
+          onToggleLockedFace={(operationId, faceId) =>
+            pauseAndExecute("pipeline.toggleLockedFace", {
+              operationId,
+              faceId,
+            })}
+          onSetCreaseAngle={(operationId, edgeId, angleDegrees) =>
+            pauseAndExecute("pipeline.setCreaseAngle", {
               operationId,
               edgeId,
               angleDegrees,
+            })}
+          onSetCamera={(cameraPreset) =>
+            state.execute("view.setCamera", { cameraPreset })}
+          onSetHelpers={(showHelpers) =>
+            state.execute("view.setHelpers", { showHelpers })}
+          onSelectMaterial={(material) =>
+            state.execute("material.select", { material })}
+          onSelectMaterialSpec={selectMaterialSpec}
+          onSetThickness={(thicknessMm) =>
+            state.execute("material.setThickness", { thicknessMm })}
+          onSetFoldAngle={setFoldAngle}
+          onSetArtworkColor={(artworkColor) =>
+            state.execute("artwork.setColor", { artworkColor })}
+          onSetArtworkPlacement={(placement) =>
+            state.execute("artwork.setPlacement", placement)}
+          onResetArtworkPlacement={() =>
+            state.execute("artwork.resetPlacement")}
+          onToggleOperation={(operationId) =>
+            pauseAndExecute("pipeline.toggleOperation", { operationId })}
+          onMoveOperation={(operationId, direction) =>
+            pauseAndExecute("pipeline.moveOperation", {
+              operationId,
+              direction,
+            })}
+          onToggleModifier={(modifierKey) =>
+            pauseAndExecute("pipeline.toggleModifier", { modifierKey })}
+        />
+
+        {restoredDraftName ? (
+          <div className="restore-notice" role="status">
+            <span>Restored “{restoredDraftName}”</span>
+            <button type="button" onClick={() => void startFresh()}>
+              Start fresh
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss restore notice"
+              onClick={() => setRestoredDraftName(null)}
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        ) : null}
+        {importNotice ? (
+          <div
+            className={`import-notice ${importNotice.kind}`}
+            role={importNotice.kind === "error" ? "alert" : "status"}
+          >
+            <span>{importNotice.message}</span>
+            <button
+              type="button"
+              aria-label="Dismiss notice"
+              onClick={() => setImportNotice(null)}
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        ) : null}
+        {mobileNoticeVisible ? (
+          <div className="mobile-screen-notice" role="status">
+            <Icon name="monitor" size={20} />
+            <span>
+              PackCAD Mockup works on any device, but is optimized for larger
+              screens.
+            </span>
+            <button
+              type="button"
+              aria-label="Dismiss screen-size notice"
+              onClick={() => setMobileNoticeVisible(false)}
+            >
+              <Icon name="x" size={18} />
+            </button>
+          </div>
+        ) : null}
+
+        <PreferencesDialog
+          open={preferencesOpen}
+          project={state.content}
+          preferences={preferences}
+          onClose={() => setPreferencesOpen(false)}
+          onRestoreDefaults={() => {
+            setPreferences(defaultUiPreferences);
+            window.localStorage.setItem(
+              UI_PREFERENCES_STORAGE_KEY,
+              JSON.stringify(defaultUiPreferences),
+            );
+            state.execute("view.setProjection", {
+              projection: defaultUiPreferences.cameraType,
             });
+            setNotice("Restored preference defaults");
+          }}
+          onUpdate={updatePreferencesAndProject}
+          onSetViewLayout={applyViewLayout}
+          onSelectMaterialSpec={selectMaterialSpec}
+          onSetThickness={(thicknessMm) =>
+            state.execute("material.setThickness", { thicknessMm })}
+          onResetCamera={() => {
+            state.execute("view.setCamera", { cameraPreset: "isometric" });
+            setFitNonce((current) => current + 1);
           }}
         />
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
