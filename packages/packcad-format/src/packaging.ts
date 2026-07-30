@@ -114,7 +114,7 @@ export type PackagingProject = {
 export const materials: Record<MaterialId, MaterialDefinition> = {
   chipboard: {
     label: "Chipboard",
-    texture: "/assets/chipboard.jpg",
+    texture: `${import.meta.env.BASE_URL}assets/chipboard.jpg`,
     color: "#c8b394",
     description: "Smooth recycled board for compact retail packaging.",
     finish: "matte",
@@ -124,7 +124,7 @@ export const materials: Record<MaterialId, MaterialDefinition> = {
   },
   corrugated: {
     label: "Corrugated cardboard",
-    texture: "/assets/corrugated_cardboard.jpg",
+    texture: `${import.meta.env.BASE_URL}assets/corrugated_cardboard.jpg`,
     color: "#b98f5a",
     description: "Brown corrugated stock with visible fiber variation.",
     finish: "corrugated",
@@ -135,7 +135,7 @@ export const materials: Record<MaterialId, MaterialDefinition> = {
   },
   flute: {
     label: "Single-wall flute",
-    texture: "/assets/corrugated_flute_single_layer_sideband.jpg",
+    texture: `${import.meta.env.BASE_URL}assets/corrugated_flute_single_layer_sideband.jpg`,
     color: "#d0a66b",
     description: "Sideband flute preview for thicker structural folds.",
     finish: "fluted",
@@ -146,7 +146,7 @@ export const materials: Record<MaterialId, MaterialDefinition> = {
   },
   kraft: {
     label: "Kraft paperboard",
-    texture: "/assets/kraft_paperboard.jpg",
+    texture: `${import.meta.env.BASE_URL}assets/kraft_paperboard.jpg`,
     color: "#bc8d55",
     description: "Warm kraft board for natural-package mockups.",
     finish: "natural",
