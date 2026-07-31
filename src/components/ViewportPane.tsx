@@ -3,17 +3,22 @@ import {
   Box3,
   BufferGeometry,
   ClampToEdgeWrapping,
+  DoubleSide,
   Float32BufferAttribute,
+  GreaterDepth,
   GridHelper,
   Group,
   LinearFilter,
   LineBasicMaterial,
   LineSegments,
   Mesh,
+  MeshBasicMaterial,
   NoToneMapping,
   RepeatWrapping,
   SRGBColorSpace,
   TextureLoader,
+  type ColorRepresentation,
+  type DepthModes,
   type Object3D,
   type Texture,
 } from "three";
@@ -46,7 +51,11 @@ import {
 } from "../render/foldSceneBuilder";
 import {
   HOVER_EDGE_COLOR,
+  LOCKED_FACE_TINT,
+  LOCKED_FACE_TINT_OPACITY,
   SELECTED_EDGE_COLOR,
+  SELECTED_FACE_TINT,
+  SELECTED_FACE_TINT_OPACITY,
 } from "../render/edgeStyle";
 import {
   createFoldSceneMaterials,
@@ -121,40 +130,17 @@ function applyArtworkPlacement(
   texture.needsUpdate = true;
 }
 
-function replaceOverlayGeometry(
-  line: LineSegments,
-  positions: Float32Array | undefined,
-): void {
-  const geometry = new BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new Float32BufferAttribute(positions ?? new Float32Array(), 3),
-  );
-  line.geometry.dispose();
-  line.geometry = geometry;
-}
-
-function updateOverlayPositions(
-  line: LineSegments | null,
-  positions: Float32Array | undefined,
-): void {
-  if (!line) return;
-  const attribute = line.geometry.getAttribute("position");
-  const target = attribute.array as Float32Array;
-  if (!positions || target.length !== positions.length) return;
-  target.set(positions);
-  attribute.needsUpdate = true;
-  line.geometry.computeBoundingBox();
-  line.geometry.computeBoundingSphere();
-}
-
 function createFatEdges(
   source: BufferGeometry,
   viewport: Viewport,
   options: {
+    color?: ColorRepresentation;
     dashed?: boolean;
+    depthFunc?: DepthModes;
     linewidth: number;
     depthTest: boolean;
+    opacity?: number;
+    renderOrder?: number;
   },
 ): {
   line: LineSegments2;
@@ -165,11 +151,13 @@ function createFatEdges(
   geometry.setPositions(
     source.getAttribute("position").array as Float32Array,
   );
-  geometry.setColors(
-    source.getAttribute("color").array as Float32Array,
-  );
+  const colorAttribute = source.getAttribute("color");
+  if (colorAttribute) {
+    geometry.setColors(colorAttribute.array as Float32Array);
+  }
   const material = new LineMaterial({
-    vertexColors: true,
+    color: options.color ?? 0xffffff,
+    vertexColors: Boolean(colorAttribute),
     linewidth: options.linewidth,
     worldUnits: false,
     dashed: options.dashed ?? false,
@@ -178,50 +166,54 @@ function createFatEdges(
     depthTest: options.depthTest,
     depthWrite: false,
     transparent: true,
+    opacity: options.opacity ?? 1,
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
+  if (options.depthFunc !== undefined) material.depthFunc = options.depthFunc;
   material.resolution.set(
     Math.max(1, viewport.renderer.domElement.clientWidth),
     Math.max(1, viewport.renderer.domElement.clientHeight),
   );
   const line = new LineSegments2(geometry, material);
   if (options.dashed) line.computeLineDistances();
-  line.renderOrder = 3;
+  line.renderOrder = options.renderOrder ?? 3;
   return { line, geometry, material };
 }
 
 type FatEdges = ReturnType<typeof createFatEdges>;
 
-function updateFatEdgePositions(
+function updateFatEdgePositionArray(
   fatEdges: FatEdges | null,
-  source: BufferGeometry,
+  positions: Float32Array | undefined,
 ): void {
   if (!fatEdges) return;
-  const positions = source.getAttribute("position").array as Float32Array;
+  const nextPositions = positions ?? new Float32Array();
   const instanceStart = fatEdges.geometry.getAttribute("instanceStart");
   const instanceEnd = fatEdges.geometry.getAttribute("instanceEnd");
-  const segmentCount = positions.length / 6;
+  const segmentCount = nextPositions.length / 6;
   if (
+    !instanceStart ||
+    !instanceEnd ||
     instanceStart.count !== segmentCount ||
     instanceEnd.count !== segmentCount
   ) {
-    fatEdges.geometry.setPositions(positions);
+    fatEdges.geometry.setPositions(nextPositions);
   } else {
     for (let index = 0; index < segmentCount; index += 1) {
       const offset = index * 6;
       instanceStart.setXYZ(
         index,
-        positions[offset],
-        positions[offset + 1],
-        positions[offset + 2],
+        nextPositions[offset],
+        nextPositions[offset + 1],
+        nextPositions[offset + 2],
       );
       instanceEnd.setXYZ(
         index,
-        positions[offset + 3],
-        positions[offset + 4],
-        positions[offset + 5],
+        nextPositions[offset + 3],
+        nextPositions[offset + 4],
+        nextPositions[offset + 5],
       );
     }
     instanceStart.needsUpdate = true;
@@ -230,6 +222,38 @@ function updateFatEdgePositions(
     fatEdges.geometry.computeBoundingSphere();
   }
   if (fatEdges.material.dashed) fatEdges.line.computeLineDistances();
+}
+
+function updateFatEdgePositions(
+  fatEdges: FatEdges | null,
+  source: BufferGeometry,
+): void {
+  updateFatEdgePositionArray(
+    fatEdges,
+    source.getAttribute("position").array as Float32Array,
+  );
+}
+
+function createEdgePositionSource(
+  positions: Float32Array | undefined,
+): BufferGeometry {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(positions ?? new Float32Array(), 3),
+  );
+  return geometry;
+}
+
+function updateFatEdgeResolution(
+  fatEdges: FatEdges | null,
+  viewport: Viewport,
+): void {
+  if (!fatEdges) return;
+  fatEdges.material.resolution.set(
+    Math.max(1, viewport.renderer.domElement.clientWidth),
+    Math.max(1, viewport.renderer.domElement.clientHeight),
+  );
 }
 
 export function ViewportPane({
@@ -262,10 +286,12 @@ export function ViewportPane({
   const [backArtworkTexture, setBackArtworkTexture] = useState<Texture | null>(null);
   const sceneDataRef = useRef<FoldSceneData | null>(null);
   const sceneObjectRef = useRef<Object3D | null>(null);
-  const hoverLineRef = useRef<LineSegments | null>(null);
-  const selectedLineRef = useRef<LineSegments | null>(null);
+  const hoverLineRef = useRef<FatEdges | null>(null);
+  const selectedLineRef = useRef<FatEdges | null>(null);
   const solidEdgesRef = useRef<FatEdges | null>(null);
   const dashedEdgesRef = useRef<FatEdges | null>(null);
+  const occludedSolidEdgesRef = useRef<FatEdges | null>(null);
+  const occludedDashedEdgesRef = useRef<FatEdges | null>(null);
   const autoFitRef = useRef<{
     model: PackagingProject["foldModel"];
     viewMode: PackagingProject["viewMode"];
@@ -506,13 +532,21 @@ export function ViewportPane({
     updateFoldScenePositions(data, foldPositionInputRef.current);
     updateFatEdgePositions(solidEdgesRef.current, data.solidEdgeGeometry);
     updateFatEdgePositions(dashedEdgesRef.current, data.dashedEdgeGeometry);
-    updateOverlayPositions(
+    updateFatEdgePositions(
+      occludedSolidEdgesRef.current,
+      data.solidEdgeGeometry,
+    );
+    updateFatEdgePositions(
+      occludedDashedEdgesRef.current,
+      data.dashedEdgeGeometry,
+    );
+    updateFatEdgePositionArray(
       selectedLineRef.current,
       selectedFoldEdgeIndexRef.current === null
         ? undefined
         : data.positionsByEdge.get(selectedFoldEdgeIndexRef.current),
     );
-    updateOverlayPositions(
+    updateFatEdgePositionArray(
       hoverLineRef.current,
       hoveredFoldEdgeIndexRef.current === null
         ? undefined
@@ -635,8 +669,29 @@ export function ViewportPane({
       linewidth: 1.7,
       depthTest: viewMode !== "2d",
     });
+    const occludedSolidEdges = viewMode === "3d"
+      ? createFatEdges(data.solidEdgeGeometry, viewport, {
+          linewidth: 1.9,
+          depthTest: true,
+          depthFunc: GreaterDepth,
+          opacity: 0.14,
+          renderOrder: 2,
+        })
+      : null;
+    const occludedDashedEdges = viewMode === "3d"
+      ? createFatEdges(data.dashedEdgeGeometry, viewport, {
+          dashed: true,
+          linewidth: 1.7,
+          depthTest: true,
+          depthFunc: GreaterDepth,
+          opacity: 0.14,
+          renderOrder: 2,
+        })
+      : null;
     solidEdgesRef.current = solidEdges;
     dashedEdgesRef.current = dashedEdges;
+    occludedSolidEdgesRef.current = occludedSolidEdges;
+    occludedDashedEdgesRef.current = occludedDashedEdges;
     const updateDashScale = (): void => {
       if (viewMode !== "2d") return;
       const zoom = viewport.camera.getState().zoom;
@@ -657,43 +712,87 @@ export function ViewportPane({
     });
     const edgePickLines = new LineSegments(data.edgePickGeometry, edgePickMaterial);
     edgePickLines.name = "Fold crease pick targets";
-    const selectedLineMaterial = new LineBasicMaterial({
-      color: SELECTED_EDGE_COLOR,
-      depthTest: false,
-    });
-    const hoverLineMaterial = new LineBasicMaterial({
-      color: HOVER_EDGE_COLOR,
-      depthTest: false,
-    });
-    const selectedLine = new LineSegments(new BufferGeometry(), selectedLineMaterial);
-    const hoverLine = new LineSegments(new BufferGeometry(), hoverLineMaterial);
-    selectedLine.renderOrder = 19;
-    hoverLine.renderOrder = 20;
-    replaceOverlayGeometry(
-      selectedLine,
+    const selectedEdgeSource = createEdgePositionSource(
       selectedFoldEdgeIndex === null
         ? undefined
         : data.positionsByEdge.get(selectedFoldEdgeIndex),
     );
-    replaceOverlayGeometry(
-      hoverLine,
+    const hoverEdgeSource = createEdgePositionSource(
       hoveredFoldEdgeIndex === null
         ? undefined
         : data.positionsByEdge.get(hoveredFoldEdgeIndex),
     );
+    const selectedLine = createFatEdges(selectedEdgeSource, viewport, {
+      color: SELECTED_EDGE_COLOR,
+      linewidth: 4.9,
+      depthTest: false,
+      renderOrder: 19,
+    });
+    const hoverLine = createFatEdges(hoverEdgeSource, viewport, {
+      color: HOVER_EDGE_COLOR,
+      linewidth: 3.9,
+      depthTest: false,
+      renderOrder: 20,
+    });
     selectedLineRef.current = selectedLine;
     hoverLineRef.current = hoverLine;
 
+    const lockedTintMaterial = new MeshBasicMaterial({
+      color: LOCKED_FACE_TINT,
+      transparent: true,
+      opacity: LOCKED_FACE_TINT_OPACITY,
+      depthWrite: false,
+      depthTest: viewMode !== "2d",
+      side: DoubleSide,
+    });
+    const selectedTintMaterial = new MeshBasicMaterial({
+      color: SELECTED_FACE_TINT,
+      transparent: true,
+      opacity: SELECTED_FACE_TINT_OPACITY,
+      depthWrite: false,
+      depthTest: viewMode !== "2d",
+      side: DoubleSide,
+    });
+    const lockedTintMesh = data.lockedTintGeometry
+      ? new Mesh(data.lockedTintGeometry, lockedTintMaterial)
+      : null;
+    const selectedTintMesh = data.selectedTintGeometry
+      ? new Mesh(data.selectedTintGeometry, selectedTintMaterial)
+      : null;
+    if (lockedTintMesh) lockedTintMesh.renderOrder = 1;
+    if (selectedTintMesh) selectedTintMesh.renderOrder = 2;
+
     const group = new Group();
     group.name = "PackCAD folded package";
+    group.add(mesh);
+    if (lockedTintMesh) group.add(lockedTintMesh);
+    if (selectedTintMesh) group.add(selectedTintMesh);
+    if (occludedSolidEdges) group.add(occludedSolidEdges.line);
+    if (occludedDashedEdges) group.add(occludedDashedEdges.line);
     group.add(
-      mesh,
       solidEdges.line,
       dashedEdges.line,
       edgePickLines,
+      selectedLine.line,
+      hoverLine.line,
+    );
+    const fatEdgeLayers = [
+      solidEdges,
+      dashedEdges,
+      occludedSolidEdges,
+      occludedDashedEdges,
       selectedLine,
       hoverLine,
-    );
+    ];
+    const syncLineResolution = (): void => {
+      for (const layer of fatEdgeLayers) {
+        updateFatEdgeResolution(layer, viewport);
+      }
+      viewport.invalidate();
+    };
+    syncLineResolution();
+    const resizeObserver = new ResizeObserver(syncLineResolution);
+    resizeObserver.observe(viewport.renderer.domElement);
     viewport.scene.add(group);
     sceneObjectRef.current = group;
     if (interactive) {
@@ -718,21 +817,36 @@ export function ViewportPane({
       if (hoverLineRef.current === hoverLine) hoverLineRef.current = null;
       if (solidEdgesRef.current === solidEdges) solidEdgesRef.current = null;
       if (dashedEdgesRef.current === dashedEdges) dashedEdgesRef.current = null;
+      if (occludedSolidEdgesRef.current === occludedSolidEdges) {
+        occludedSolidEdgesRef.current = null;
+      }
+      if (occludedDashedEdgesRef.current === occludedDashedEdges) {
+        occludedDashedEdgesRef.current = null;
+      }
       if (interactive) {
         viewport.picking.unregister(mesh);
         viewport.picking.unregister(edgePickLines);
       }
       offCameraChange();
+      resizeObserver.disconnect();
       viewport.scene.remove(group);
       solidEdges.geometry.dispose();
       solidEdges.material.dispose();
       dashedEdges.geometry.dispose();
       dashedEdges.material.dispose();
+      occludedSolidEdges?.geometry.dispose();
+      occludedSolidEdges?.material.dispose();
+      occludedDashedEdges?.geometry.dispose();
+      occludedDashedEdges?.material.dispose();
       edgePickMaterial.dispose();
-      selectedLineMaterial.dispose();
-      hoverLineMaterial.dispose();
       selectedLine.geometry.dispose();
+      selectedLine.material.dispose();
       hoverLine.geometry.dispose();
+      hoverLine.material.dispose();
+      selectedEdgeSource.dispose();
+      hoverEdgeSource.dispose();
+      lockedTintMaterial.dispose();
+      selectedTintMaterial.dispose();
       disposeSceneData(data);
       sceneDataRef.current = null;
       viewport.invalidate();
@@ -758,7 +872,7 @@ export function ViewportPane({
     const data = sceneDataRef.current;
     const line = selectedLineRef.current;
     if (!data || !line) return;
-    replaceOverlayGeometry(
+    updateFatEdgePositionArray(
       line,
       selectedFoldEdgeIndex === null
         ? undefined
@@ -771,7 +885,7 @@ export function ViewportPane({
     const data = sceneDataRef.current;
     const line = hoverLineRef.current;
     if (!data || !line) return;
-    replaceOverlayGeometry(
+    updateFatEdgePositionArray(
       line,
       hoveredFoldEdgeIndex === null
         ? undefined

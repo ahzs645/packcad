@@ -68,30 +68,50 @@ describe("PackCAD-style folding replay", () => {
     expect(constraints).toEqual({ 0: 90 });
   });
 
-  it("advances exactly one persistent solver iteration independent of elapsed time", () => {
+  it("paces persistent solver iterations from elapsed time", () => {
     const project = sourceProject();
     const initial = startFoldingPlayer(project, createFoldingPlayer(project));
     const shortFrame = advanceFoldingPlayer(project, initial, 1);
-    const longFrame = advanceFoldingPlayer(project, initial, 1000);
+    const oneStepFrame = advanceFoldingPlayer(project, initial, 51);
+    const catchUpFrame = advanceFoldingPlayer(project, initial, 1000);
 
     expect(shortFrame.sourceDriven).toBe(true);
-    expect(shortFrame.stageIterations).toBe(1);
-    expect(longFrame.stageIterations).toBe(1);
-    expect(shortFrame.stageConstraintAngles).toEqual(longFrame.stageConstraintAngles);
-    expect(shortFrame.positions).toEqual(longFrame.positions);
-    expect(shortFrame.positions).not.toEqual(initial.positions);
+    expect(shortFrame.stageIterations).toBe(0);
+    expect(shortFrame.positions).toEqual(initial.positions);
+    expect(oneStepFrame.stageIterations).toBe(1);
+    expect(oneStepFrame.positions).not.toEqual(initial.positions);
+    expect(catchUpFrame.stageIterations).toBeGreaterThan(1);
+    expect(catchUpFrame.stageIterations).toBeLessThanOrEqual(4);
   });
 
   it("continues from the prior geometry and keeps one constraint set for the stage", () => {
     const project = sourceProject();
     const initial = startFoldingPlayer(project, createFoldingPlayer(project));
-    const first = advanceFoldingPlayer(project, initial, 16);
-    const second = advanceFoldingPlayer(project, first, 16);
+    const first = advanceFoldingPlayer(project, initial, 51);
+    const second = advanceFoldingPlayer(project, first, 51);
 
     expect(second.stageIterations).toBe(2);
     expect(second.stageConstraintAngles).toEqual(first.stageConstraintAngles);
     expect(second.positions).not.toEqual(first.positions);
     expect(second.energyHistory.length).toBeGreaterThanOrEqual(first.energyHistory.length);
+  });
+
+  it("produces the same solver trajectory for the same elapsed time at different frame rates", () => {
+    const project = sourceProject();
+    const initial = startFoldingPlayer(project, createFoldingPlayer(project));
+    let highRefresh = initial;
+    let lowRefresh = initial;
+    for (let index = 0; index < 120; index += 1) {
+      highRefresh = advanceFoldingPlayer(project, highRefresh, 1000 / 120);
+    }
+    for (let index = 0; index < 20; index += 1) {
+      lowRefresh = advanceFoldingPlayer(project, lowRefresh, 50);
+    }
+
+    expect(highRefresh.stepIndex).toBe(lowRefresh.stepIndex);
+    expect(highRefresh.stageIterations).toBe(lowRefresh.stageIterations);
+    expect(highRefresh.displayAngle).toBeCloseTo(lowRefresh.displayAngle, 8);
+    expect(highRefresh.positions).toEqual(lowRefresh.positions);
   });
 
   it("completes all five source stages on one continuous finite trajectory", () => {
@@ -101,7 +121,7 @@ describe("PackCAD-style folding replay", () => {
     let updates = 0;
     while (player.playing && updates < 1_500) {
       visited.add(player.stepIndex);
-      player = advanceFoldingPlayer(project, player, updates % 2 === 0 ? 1 : 1000);
+      player = advanceFoldingPlayer(project, player, 1000 / 20);
       updates += 1;
     }
 

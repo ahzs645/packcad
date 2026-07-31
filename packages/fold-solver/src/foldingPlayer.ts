@@ -18,6 +18,7 @@ export type FoldingPlayerState = {
   positions: Vec3[] | null;
   stageConstraintAngles: Record<number, number> | null;
   stageIterations: number;
+  solverAccumulatorMs: number;
   energyHistory: number[];
   priorTargetAngles: Record<number, number>;
   solverStepSize: number;
@@ -51,6 +52,8 @@ const ENERGY_ABSOLUTE_CHANGE_THRESHOLD = 0.0001;
 const ENERGY_PLATEAU_DETECTION_THRESHOLD = 0.001;
 const FINAL_SOLVE_ENERGY_PLATEAU_DETECTION_THRESHOLD = 0.01;
 const ADAPTIVE_STEP_DEFAULT_STEP_SIZE = 0.9;
+const SOURCE_SOLVER_STEP_MS = 1000 / 20;
+const MAX_SOURCE_SOLVER_STEPS_PER_UPDATE = 4;
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -102,6 +105,7 @@ function freshSourceReplay(project: PackagingProject, base: FoldingPlayerState):
     positions: flatPositions(project),
     stageConstraintAngles: null,
     stageIterations: 0,
+    solverAccumulatorMs: 0,
     energyHistory: [],
     priorTargetAngles: {},
     solverStepSize: ADAPTIVE_STEP_DEFAULT_STEP_SIZE,
@@ -133,6 +137,7 @@ export function createFoldingPlayer(
     positions: null,
     stageConstraintAngles: null,
     stageIterations: 0,
+    solverAccumulatorMs: 0,
     energyHistory: [],
     priorTargetAngles: {},
     solverStepSize: ADAPTIVE_STEP_DEFAULT_STEP_SIZE,
@@ -202,7 +207,7 @@ function averageActiveAngle(
   return activeEdges.reduce((sum, edge) => sum + (measured[edge] ?? 0), 0) / activeEdges.length;
 }
 
-function advanceSourceReplay(
+function advanceSourceReplayStep(
   project: PackagingProject,
   player: FoldingPlayerState,
 ): FoldingPlayerState {
@@ -251,6 +256,7 @@ function advanceSourceReplay(
     positions: result.positions,
     stageConstraintAngles,
     stageIterations,
+    solverAccumulatorMs: player.solverAccumulatorMs,
     energyHistory,
     solverStepSize: result.stepSize,
     solverMaxEdgeError: result.maxEdgeError,
@@ -278,6 +284,7 @@ function advanceSourceReplay(
     progress: 0,
     stageConstraintAngles: null,
     stageIterations: 0,
+    solverAccumulatorMs: player.solverAccumulatorMs,
     energyHistory: [],
     priorTargetAngles,
     solverStepSize: ADAPTIVE_STEP_DEFAULT_STEP_SIZE,
@@ -292,7 +299,28 @@ export function advanceFoldingPlayer(
   deltaMs: number,
 ): FoldingPlayerState {
   if (!player.playing || project.foldingSteps.length <= 1) return pauseFoldingPlayer(player);
-  if (project.foldModel) return advanceSourceReplay(project, player);
+  if (project.foldModel) {
+    let next = {
+      ...player,
+      solverAccumulatorMs: Math.min(
+        SOURCE_SOLVER_STEP_MS * MAX_SOURCE_SOLVER_STEPS_PER_UPDATE,
+        player.solverAccumulatorMs
+          + Math.max(0, deltaMs) * clamp(player.speed, 0.1, 8),
+      ),
+    };
+    let steps = Math.min(
+      MAX_SOURCE_SOLVER_STEPS_PER_UPDATE,
+      Math.floor((next.solverAccumulatorMs + 1e-7) / SOURCE_SOLVER_STEP_MS),
+    );
+    while (steps > 0 && next.playing) {
+      next = advanceSourceReplayStep(project, {
+        ...next,
+        solverAccumulatorMs: next.solverAccumulatorMs - SOURCE_SOLVER_STEP_MS,
+      });
+      steps -= 1;
+    }
+    return next;
+  }
 
   const first = firstPlayableIndex(project);
   const last = project.foldingSteps.length - 1;

@@ -72,27 +72,17 @@ accepting R2.
   unit. PackCAD therefore performs explicit geometry/material disposal beside its scene builder.
 - `@atelier/io/three` exports a scene object directly, which fits glTF export well.
 
-## Not yet ported
+## Migration parity
 
-Each omission is visible here rather than represented by a non-working control.
+The product UI now includes document open/save, local drafts and recovery, share routes,
+front/back artwork placement, animated folding playback, crease and locked-face editing,
+operation controls, and screen-space cut/crease rendering.
 
-- File-open, save-document, local-draft, share-route, and recovery UI — from
-  `packager/src/model/{localDrafts,projectDocument,routeState}.ts` and the corresponding
-  sections of `packager/src/App.tsx`.
-- Artwork image upload, front/back texture placement, and texture previews — from
-  `packager/src/App.tsx`, `packager/src/render/FoldScene.tsx`, and
-  `packager/src/render/ThreePreview.tsx`.
-- Animated play/pause/loop controls — the player is ported in
-  `packages/fold-solver/src/foldingPlayer.ts`; its UI remains in `packager/src/App.tsx`.
-- Interactive crease hover, edge-group editing, locked-face authoring, and operation reorder/
-  rename controls — command reducers are registered; the remaining controls come from
-  `packager/src/App.tsx`, `packager/src/render/FoldScene.tsx`, and
-  `packager/src/render/foldLineInteraction.ts`.
-- Fat screen-space line rendering and crease hover overlays — from
-  `packager/src/render/FatEdges.tsx` and `packager/src/render/FoldScene.tsx`; the vertical
-  slice currently uses native three.js line segments.
-- Texture files and captured material artwork assets — from `packager/public/assets/`; the
-  current vertical slice uses the catalog's material colors and physical thickness.
-- Legacy route-level diagnostics and audit `data-*` attributes — from
-  `packager/src/render/{DielinePreview,FoldScene,ThreePreview}.tsx`. The F1 descriptor
-  scaffolding files were intentionally not ported.
+The folded viewport also preserves the source presentation details that are easy to lose in
+an engine migration: faint occluded-edge passes, thick hover/selection strokes, locked and
+selected face tints, resize-aware line resolution, physical board thickness, and corrugated
+cut-edge materials. Source-driven playback runs on a fixed solver clock so its speed does not
+change with renderer cost or display refresh rate.
+
+Legacy route-level diagnostic `data-*` attributes and the removed F1 descriptor scaffolding
+remain intentionally out of scope.
