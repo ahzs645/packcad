@@ -581,7 +581,7 @@ export default function App() {
   }, [foldingPlayback, state]);
 
   const selectStep = useCallback((stepId: string): void => {
-    foldingPlayback.pause();
+    foldingPlayback.seek(stepId);
     setSelectedFaceIndex(null);
     setSelectedFoldEdgeIndex(null);
     setHoveredFoldEdgeIndex(null);

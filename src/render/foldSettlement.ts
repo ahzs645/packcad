@@ -23,34 +23,6 @@ export type FoldDiagnostics =
     }
   | { status: "error"; message: string };
 
-function finalImplicitClosureAngles(
-  model: FoldModel,
-  activeKeyframeIndex: number,
-  foldAngle: number,
-): Record<number, number> {
-  if (activeKeyframeIndex !== model.keyframes.length - 1) return {};
-
-  const explicitlyKeyed = new Set(
-    model.keyframes.flatMap((keyframe) =>
-      Object.keys(keyframe.creaseAnglesDeg).map(Number)),
-  );
-  const closureAngles: Record<number, number> = {};
-  model.edgesVertices.forEach((_, edgeIndex) => {
-    // The Mailer Box source leaves its body-to-lid and lid-to-tuck hinges as
-    // interior "U" folds rather than assigning them to a keyframe. They must
-    // stay untouched while scrubbing the authored stages, then complete with
-    // the last settled fold so the deliverable is a closed package.
-    if (
-      model.edgesAssignment[edgeIndex] === "U"
-      && model.edgeFaces[edgeIndex]?.length === 2
-      && !explicitlyKeyed.has(edgeIndex)
-    ) {
-      closureAngles[edgeIndex] = foldAngle;
-    }
-  });
-  return closureAngles;
-}
-
 export function settledFoldModel(
   model: FoldModel,
   foldStepIndex: number,
@@ -74,7 +46,6 @@ export function settledFoldModel(
           angle * ratio,
         ]),
       ),
-      ...finalImplicitClosureAngles(model, activeKeyframeIndex, foldAngle),
     },
   };
   return {

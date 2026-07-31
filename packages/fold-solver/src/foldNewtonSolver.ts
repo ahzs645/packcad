@@ -29,7 +29,6 @@ import type { FoldModel } from "@packcad/format";
 import {
   appendPriorTargets,
   sourceStageConstraintAngles,
-  sourceStageFixedFaceIndices,
 } from "./foldPlaybackConstraints";
 import type { Vec3 } from "./foldSolver";
 
@@ -117,6 +116,23 @@ export type NewtonFold = {
   stuck: boolean;
 };
 
+type NewtonStageOptions = {
+  maxIterations?: number;
+  seed?: V3[];
+  fixedFaceIndices?: number[];
+  fixedVertexIndices?: number[];
+  solvedEdgeIndices?: number[];
+};
+
+function stageEnergyPlateau(history: number[], relativeThreshold: number): boolean {
+  if (history.length < ENERGY_DETECTION_WINDOW) return false;
+  const first = history[history.length - ENERGY_DETECTION_WINDOW];
+  const last = history[history.length - 1];
+  const change = Math.abs(last - first);
+  if (change <= ENERGY_ABSOLUTE_CHANGE_THRESHOLD) return true;
+  return change / (first + 1e-10) <= relativeThreshold;
+}
+
 /** Dense Cholesky solve of SPD A x = b (A row-major n×n). null if not PD. */
 function choleskySolve(A: Float64Array, b: Float64Array, n: number): Float64Array | null {
   const L = new Float64Array(n * n);
@@ -170,6 +186,10 @@ export function foldNewton(
     fixedFaceIndices?: number[];
     /** Extra individual vertices to pin (`fixedVertexIDs`). */
     fixedVertexIndices?: number[];
+    /** User-authored crease edges used for the source app's Solved status.
+     * Implicit component constraints still contribute energy but do not block
+     * a stage once its authored creases have reached their targets. */
+    solvedEdgeIndices?: number[];
     /** Persistent OrigamiSimulation line-search state (default 0.9). */
     initialStepSize?: number;
   } = {},
@@ -285,6 +305,9 @@ export function foldNewton(
     creases.push(c);
     dihs.push(c);
   }
+  const solvedEdges = options.solvedEdgeIndices
+    ? new Set(options.solvedEdgeIndices)
+    : null;
 
   // ---- mass matrix (lumped triangle areas, flat) ---------------------------
   const mass = new Float64Array(N);
@@ -485,6 +508,7 @@ export function foldNewton(
   const isSolved = (): boolean => {
     if (!edgesWithinTol(FINAL_SOLVE_TOL_DISTANCE)) return false;
     for (const c of creases) {
+      if (solvedEdges && !solvedEdges.has(c.edge)) continue;
       const ev = evalDih(c);
       if (!ev) continue;
       if (Math.abs(c.target - ev.current) > FINAL_SOLVE_TOL_ANGULAR_RADIANS) return false;
@@ -596,6 +620,7 @@ export function foldNewton(
   }
   let maxAngleErrorDeg = 0;
   for (const c of creases) {
+    if (solvedEdges && !solvedEdges.has(c.edge)) continue;
     const ev = evalDih(c);
     if (!ev) continue;
     maxAngleErrorDeg = Math.max(maxAngleErrorDeg, (Math.abs(c.target - ev.current) * 180) / Math.PI);
@@ -610,6 +635,76 @@ export function foldNewton(
     energy: totalEnergy,
     stepSize: lastStepSize,
     stuck,
+  };
+}
+
+/** Advance one source operation exactly as the interactive player does. The
+ * reference carries line-search state between individual solver cycles and
+ * stops when the authored creases are solved on an energy plateau; running a
+ * single monolithic solve can cross that plateau into a different rigid branch.
+ */
+export function foldNewtonStage(
+  model: FoldModel,
+  creaseAnglesDeg: Record<number, number>,
+  options: NewtonStageOptions = {},
+): NewtonFold {
+  const cap = options.maxIterations ?? MAX_SOLVER_ITERATIONS;
+  let result: NewtonFold | null = null;
+  let positions = options.seed;
+  let stepSize = ADAPTIVE_STEP_DEFAULT_STEP_SIZE;
+  let iterations = 0;
+  let stageConverged = false;
+  const energyHistory: number[] = [];
+
+  while (iterations < cap) {
+    result = foldNewton(model, creaseAnglesDeg, {
+      maxIterations: 1,
+      seed: positions,
+      fixedFaceIndices: options.fixedFaceIndices,
+      fixedVertexIndices: options.fixedVertexIndices,
+      solvedEdgeIndices: options.solvedEdgeIndices,
+      initialStepSize: stepSize,
+    });
+    iterations += 1;
+    positions = result.positions;
+    stepSize = result.stepSize;
+    if (!result.stuck) {
+      energyHistory.push(result.energy);
+      if (energyHistory.length > ENERGY_HISTORY_MAX_LENGTH) energyHistory.shift();
+    }
+    const finalPlateau = stageEnergyPlateau(
+      energyHistory,
+      FINAL_SOLVE_ENERGY_PLATEAU_DETECTION_THRESHOLD,
+    );
+    if (
+      result.stuck
+      || (finalPlateau && (
+        stageEnergyPlateau(energyHistory, ENERGY_PLATEAU_DETECTION_THRESHOLD)
+        || result.isSolved
+      ))
+    ) {
+      stageConverged = !result.stuck;
+      break;
+    }
+  }
+
+  if (result) {
+    return {
+      ...result,
+      iterations,
+      converged: stageConverged || result.converged || iterations >= cap,
+    };
+  }
+  return {
+    ...foldNewton(model, creaseAnglesDeg, {
+      maxIterations: 0,
+      seed: positions,
+      fixedFaceIndices: options.fixedFaceIndices,
+      fixedVertexIndices: options.fixedVertexIndices,
+      solvedEdgeIndices: options.solvedEdgeIndices,
+      initialStepSize: stepSize,
+    }),
+    iterations,
   };
 }
 
@@ -640,11 +735,12 @@ export function foldNewtonSequence(
     // fixedFaceIDs) -- e.g. the milk_carton top closure pins the already-folded
     // body so the solve only moves the lid against it instead of letting the
     // whole carton drift.
-    result = foldNewton(model, stageAngles, {
+    result = foldNewtonStage(model, stageAngles, {
       maxIterations: cap,
       seed,
-      fixedFaceIndices: sourceStageFixedFaceIndices(model, kf),
+      fixedFaceIndices: kf.fixedFaceIndices,
       fixedVertexIndices: kf.fixedVertexIndices,
+      solvedEdgeIndices: Object.keys(kf.creaseAnglesDeg).map(Number),
     });
     seed = result.positions;
     priorTargets = appendPriorTargets(priorTargets, kf);

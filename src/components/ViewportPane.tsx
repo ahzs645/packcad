@@ -365,7 +365,14 @@ export function ViewportPane({
 
   useEffect(() => {
     if (!viewport) return;
-    const definition = materials[project.material];
+    const specification = materialCatalog[project.materialSpec];
+    // A FLUTE subtype describes the exposed cut edge, not the printable face.
+    // The old renderer used the wavy sideband JPEG on both, creating the broad
+    // dark streaks visible across every interior panel.
+    const definition = specification?.group === "corrugated"
+      || project.material === "flute"
+      ? materials.corrugated
+      : materials[project.material];
     let cancelled = false;
     setFaceMaterialTexture(null);
     const texture = new TextureLoader().load(definition.texture, () => {
@@ -386,7 +393,7 @@ export function ViewportPane({
       cancelled = true;
       texture.dispose();
     };
-  }, [project.material, viewport]);
+  }, [project.material, project.materialSpec, viewport]);
 
   useEffect(() => {
     if (!viewport) return;

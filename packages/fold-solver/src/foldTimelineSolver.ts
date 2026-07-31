@@ -1,9 +1,8 @@
 import type { FoldKeyframe, FoldModel } from "@packcad/format";
-import { foldNewton } from "./foldNewtonSolver";
+import { foldNewtonStage } from "./foldNewtonSolver";
 import {
   appendPriorTargets,
   sourceStageConstraintAngles,
-  sourceStageFixedFaceIndices,
 } from "./foldPlaybackConstraints";
 import type { Vec3 } from "./foldSolver";
 
@@ -89,11 +88,12 @@ export function solveFoldTimeline(
       ? scaledKeyframe(original, ratio)
       : original;
     creaseAnglesDeg = sourceStageConstraintAngles(model, keyframe, positions, priorTargets);
-    const solved = foldNewton(model, creaseAnglesDeg, {
+    const solved = foldNewtonStage(model, creaseAnglesDeg, {
       maxIterations: MAX_SOLVER_ITERATIONS,
       seed: positions,
-      fixedFaceIndices: sourceStageFixedFaceIndices(model, keyframe),
+      fixedFaceIndices: keyframe.fixedFaceIndices,
       fixedVertexIndices: keyframe.fixedVertexIndices,
+      solvedEdgeIndices: Object.keys(keyframe.creaseAnglesDeg).map(Number),
     });
     positions = solved.positions;
     maxEdgeError = solved.maxEdgeError;

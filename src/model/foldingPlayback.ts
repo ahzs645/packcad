@@ -38,6 +38,7 @@ export type FoldingPlayback = {
   progress: number;
   play: () => void;
   pause: () => void;
+  seek: (stepId: string) => void;
 };
 
 export function useFoldingPlayback(project: PackagingProject): FoldingPlayback {
@@ -102,6 +103,12 @@ export function useFoldingPlayback(project: PackagingProject): FoldingPlayback {
   const pause = useCallback((): void => {
     replacePlayer(pauseFoldingPlayer(playerRef.current));
   }, [replacePlayer]);
+  const seek = useCallback((stepId: string): void => {
+    replacePlayer(createFoldingPlayer({
+      ...projectRef.current,
+      activeStepId: stepId,
+    }));
+  }, [replacePlayer]);
   const frame = getFoldingPlayerFrame(project, player);
 
   return {
@@ -111,5 +118,6 @@ export function useFoldingPlayback(project: PackagingProject): FoldingPlayback {
     progress: foldingPlaybackProgress(project, frame),
     play,
     pause,
+    seek,
   };
 }

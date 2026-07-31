@@ -22,7 +22,7 @@ describe("source isometric camera", () => {
     expect(
       (next.position[0] - next.target[0])
         / (next.position[2] - next.target[2]),
-    ).toBeCloseTo(-4.8 / 5.8, 10);
+    ).toBeCloseTo(4.8 / 5.8, 10);
     expect(
       (next.position[1] - next.target[1])
         / (next.position[2] - next.target[2]),

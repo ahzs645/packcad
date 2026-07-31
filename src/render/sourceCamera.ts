@@ -1,11 +1,11 @@
 import type { CameraState } from "@atelier/viewport";
 
 // PackCAD Mockup v1.3.x uses a centred, elevated front view for its
-// "isometric" preset from the elevated front-right diagonal. PackCAD's scene
+// "isometric" preset from the elevated front-left diagonal. PackCAD's scene
 // remap reverses the reference renderer's depth axis, so the equivalent
-// viewport direction is (4.8, 4.8, -5.8). Preserve the current orbit distance
+// viewport direction is (-4.8, 4.8, -5.8). Preserve the current orbit distance
 // and target while adopting it.
-const SOURCE_ISOMETRIC_X = 4.8;
+const SOURCE_ISOMETRIC_X = -4.8;
 const SOURCE_ISOMETRIC_Y = 4.8;
 const SOURCE_ISOMETRIC_Z = -5.8;
 const SOURCE_ISOMETRIC_LENGTH = Math.hypot(

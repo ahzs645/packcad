@@ -138,13 +138,11 @@ function isNearPrior(currentDegrees: number, priorDegrees: number): boolean {
   return Math.abs((currentDegrees - priorDegrees) * Math.PI / 180) <= PRIOR_ANGLE_TOLERANCE_RADIANS;
 }
 
-/**
- * Reproduce the source player's staged result: explicit targets win and folds
- * reached by earlier stages stay at their attained target. The source's
- * iterative player preserves those angles through its continuous solve even
- * when the UI's "enforce prior constraints" switch is off. Our per-stage
- * Newton solve otherwise re-minimises the entire connected crease block and
- * visibly unfolds the earlier walls between keyframes.
+/** Reproduce OrigamiSimulation.__updateMergedConstraints from the source app.
+ * Explicit targets always win. Prior targets are retained only when the stage
+ * asks to enforce them and the incoming geometry is already within tolerance.
+ * Crease biconnected components without an explicit target are held at their
+ * incoming angle so unrelated parts of the package do not drift.
  */
 export function sourceStageConstraintAngles(
   model: FoldModel,
@@ -155,9 +153,12 @@ export function sourceStageConstraintAngles(
   const measured = measureCreaseAnglesDegrees(model, positions);
   const merged: Record<number, number> = {};
 
-  for (const [edgeKey, prior] of Object.entries(priorTargets)) {
-    const edge = Number(edgeKey);
-    if (measured[edge] !== undefined) merged[edge] = prior;
+  if (keyframe.enforcePriorConstraints) {
+    for (const [edgeKey, prior] of Object.entries(priorTargets)) {
+      const edge = Number(edgeKey);
+      const current = measured[edge];
+      if (current !== undefined && isNearPrior(current, prior)) merged[edge] = prior;
+    }
   }
   Object.assign(merged, keyframe.creaseAnglesDeg);
 
@@ -171,40 +172,6 @@ export function sourceStageConstraintAngles(
     }
   }
   return merged;
-}
-
-function faceArea(model: FoldModel, faceIndex: number): number {
-  const loop = model.facesVertices[faceIndex] ?? [];
-  let twiceArea = 0;
-  for (let index = 0; index < loop.length; index += 1) {
-    const a = model.verticesCoords[loop[index]];
-    const b = model.verticesCoords[loop[(index + 1) % loop.length]];
-    if (!a || !b) continue;
-    twiceArea += a[0] * b[1] - b[0] * a[1];
-  }
-  return Math.abs(twiceArea) / 2;
-}
-
-/**
- * Reproduce the source player's quasi-static parent choice. PackCAD keeps the
- * larger panel beside each driven crease on its attained pose and moves the
- * smaller flap. A position-only Newton solve otherwise has an equally valid
- * branch where the flap stays put and the entire lid moves (the old MailerBox
- * keyframe-5 behavior). Explicit locked panels remain authoritative.
- */
-export function sourceStageFixedFaceIndices(
-  model: FoldModel,
-  keyframe: FoldKeyframe,
-): number[] {
-  const fixed = new Set(keyframe.fixedFaceIndices);
-  for (const edgeKey of Object.keys(keyframe.creaseAnglesDeg)) {
-    const faces = model.edgeFaces[Number(edgeKey)] ?? [];
-    if (faces.length !== 2) continue;
-    if (faces.some((face) => fixed.has(face))) continue;
-    const [first, second] = faces;
-    fixed.add(faceArea(model, first) >= faceArea(model, second) ? first : second);
-  }
-  return [...fixed];
 }
 
 export function appendPriorTargets(

@@ -23,7 +23,7 @@ function faceNormal(
 }
 
 describe("settled fold worker input", () => {
-  it("settles the Mailer Box into a closed rigid solid", () => {
+  it("settles the Mailer Box on the source app's upright-lid branch", () => {
     const project = createMailerBoxProject();
     const model = project.foldModel;
     if (!model) throw new Error("MailerBox fixture did not produce a fold model");
@@ -41,13 +41,15 @@ describe("settled fold worker input", () => {
     expect(solve.maxAngleErrorDeg).toBeLessThan(1e-5);
 
     const finalTargets = settled.keyframes.at(-1)?.creaseAnglesDeg ?? {};
-    expect(finalTargets[8]).toBe(90);
-    expect(finalTargets[19]).toBe(90);
+    expect(finalTargets[6]).toBe(90);
+    expect(finalTargets[17]).toBe(90);
+    expect(finalTargets[8]).toBeUndefined();
+    expect(finalTargets[19]).toBeUndefined();
 
     const oriented = applyTransforms(solve.positions, model.transforms);
     const lidNormal = faceNormal(oriented, model.facesVertices[2]);
     const tuckNormal = faceNormal(oriented, model.facesVertices[11]);
-    expect(Math.abs(lidNormal[2])).toBeGreaterThan(0.999);
+    expect(Math.abs(lidNormal[1])).toBeGreaterThan(0.999);
     expect(Math.abs(tuckNormal[1])).toBeGreaterThan(0.999);
   });
 });
