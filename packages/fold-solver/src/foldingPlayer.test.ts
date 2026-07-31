@@ -68,6 +68,22 @@ describe("PackCAD-style folding replay", () => {
     expect(constraints).toEqual({ 0: 90 });
   });
 
+  it("keeps an attained prior fold while solving a later source stage", () => {
+    const model = cyclicFaceModel();
+    const keyframe = {
+      id: "later-fold",
+      label: "Later fold",
+      creaseAnglesDeg: { 1: 90 },
+      creaseEdgeGroup: { 1: 0 },
+      fixedFaceIndices: [],
+      fixedVertexIndices: [],
+      enforcePriorConstraints: false,
+    };
+    const flat = model.verticesCoords.map(([x, y]) => [x, y, 0] as [number, number, number]);
+    const constraints = sourceStageConstraintAngles(model, keyframe, flat, { 0: 0 });
+    expect(constraints).toEqual({ 0: 0, 1: 90 });
+  });
+
   it("paces persistent solver iterations from elapsed time", () => {
     const project = sourceProject();
     const initial = startFoldingPlayer(project, createFoldingPlayer(project));

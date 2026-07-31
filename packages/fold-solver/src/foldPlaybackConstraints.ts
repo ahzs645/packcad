@@ -139,9 +139,12 @@ function isNearPrior(currentDegrees: number, priorDegrees: number): boolean {
 }
 
 /**
- * Reproduce OrigamiSimulation.__updateMergedConstraints: explicit targets win;
- * prior targets are explicit only when requested; otherwise inactive
- * biconnected blocks are held at their current (or matching prior) pose.
+ * Reproduce the source player's staged result: explicit targets win and folds
+ * reached by earlier stages stay at their attained target. The source's
+ * iterative player preserves those angles through its continuous solve even
+ * when the UI's "enforce prior constraints" switch is off. Our per-stage
+ * Newton solve otherwise re-minimises the entire connected crease block and
+ * visibly unfolds the earlier walls between keyframes.
  */
 export function sourceStageConstraintAngles(
   model: FoldModel,
@@ -152,12 +155,9 @@ export function sourceStageConstraintAngles(
   const measured = measureCreaseAnglesDegrees(model, positions);
   const merged: Record<number, number> = {};
 
-  if (keyframe.enforcePriorConstraints) {
-    for (const [edgeKey, prior] of Object.entries(priorTargets)) {
-      const edge = Number(edgeKey);
-      const current = measured[edge];
-      if (current !== undefined && isNearPrior(current, prior)) merged[edge] = prior;
-    }
+  for (const [edgeKey, prior] of Object.entries(priorTargets)) {
+    const edge = Number(edgeKey);
+    if (measured[edge] !== undefined) merged[edge] = prior;
   }
   Object.assign(merged, keyframe.creaseAnglesDeg);
 

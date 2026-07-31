@@ -10,14 +10,20 @@ import {
 import { creaseColorForAssignment, type EdgeColorMode } from "./foldViewSettings";
 
 export const BOUNDARY_EDGE_COLOR = "#050505";
-export const LOCKED_EDGE_COLOR = "#2d9d78";
+export const SOURCE_3D_CREASE_COLOR = "#f7f7f8";
+export const SOURCE_2D_CREASE_COLOR = "#18181b";
+export const LOCKED_EDGE_COLOR = "#ffffff";
 export const HOVER_EDGE_COLOR = "#f59e0b";
-export const SELECTED_EDGE_COLOR = "#ff7a45";
+export const SELECTED_EDGE_COLOR = "#ffffff";
 
-export const LOCKED_FACE_TINT = "#2d9d78";
-export const LOCKED_FACE_TINT_OPACITY = 0.18;
-export const SELECTED_FACE_TINT = "#ff7a45";
-export const SELECTED_FACE_TINT_OPACITY = 0.22;
+// The source does not paint a second green layer over every locked panel. It
+// communicates the active bottom panel with one clean blue selection layer.
+export const LOCKED_FACE_TINT = "#1677ff";
+export const LOCKED_FACE_TINT_OPACITY = 0;
+export const SELECTED_FACE_TINT = "#1677ff";
+export const SELECTED_FACE_TINT_OPACITY = 0.72;
+
+export type EdgePresentation = "flat-2d" | "folded-3d";
 
 export type EdgeStyle = {
   kind: FoldLineKind;
@@ -39,6 +45,7 @@ export function resolveEdgeStyle(
   edgeIndex: number,
   foldStepIndex: number,
   edgeColorMode: EdgeColorMode,
+  presentation: EdgePresentation,
   hovered: boolean,
   selected: boolean,
 ): EdgeStyle {
@@ -52,20 +59,29 @@ export function resolveEdgeStyle(
   if (edgeColorMode === "hidden") {
     color = isBoundary ? BOUNDARY_EDGE_COLOR : null;
   } else if (edgeColorMode === "mountain-valley") {
-    color = isBoundary ? BOUNDARY_EDGE_COLOR : creaseColorForAssignment(assignment);
+    color = isBoundary
+      ? BOUNDARY_EDGE_COLOR
+      : assignment === "U" || assignment === "F"
+        ? presentation === "folded-3d"
+          ? SOURCE_3D_CREASE_COLOR
+          : SOURCE_2D_CREASE_COLOR
+        : creaseColorForAssignment(assignment);
   } else {
     color = BOUNDARY_EDGE_COLOR;
   }
 
-  let dashed = kind === "crease";
+  // The reference renders its simulation creases as continuous strokes. Its
+  // imported 2D dieline strokes are continuous as well; dash patterns are an
+  // editor convention that made the rebuilt model look materially different.
+  let dashed = false;
   let widthScale = 1;
   let renderTier = 1;
 
   // Locked edges read as a continuous fixed-panel border in every mode.
   if (kind === "locked") {
-    color = LOCKED_EDGE_COLOR;
+    color = presentation === "folded-3d" ? LOCKED_EDGE_COLOR : "#2f6fed";
     dashed = false;
-    widthScale = 1.45;
+    widthScale = 1;
     renderTier = 2;
   }
   if (selected) {

@@ -68,6 +68,13 @@ import type {
   EdgeColorMode,
   PanelColorMode,
 } from "../render/foldViewSettings";
+import { sourceIsometricCameraState } from "../render/sourceCamera";
+
+const SOURCE_3D_CUT_LINE_WIDTH = 1.2;
+const SOURCE_3D_CREASE_LINE_WIDTH = 1;
+const SOURCE_2D_CUT_LINE_WIDTH = 1.5;
+const SOURCE_2D_CREASE_LINE_WIDTH = 1.25;
+const SOURCE_OCCLUDED_EDGE_OPACITY = 0.1;
 
 interface ViewportPaneProps {
   project: PackagingProject;
@@ -430,7 +437,7 @@ export function ViewportPane({
     const source = backArtworkTexture ?? frontArtworkTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    applyArtworkPlacement(texture, project.artwork, false);
+    applyArtworkPlacement(texture, project.artwork, true);
     return texture;
   }, [backArtworkTexture, frontArtworkTexture, project.artwork]);
   useEffect(
@@ -575,7 +582,15 @@ export function ViewportPane({
 
   useEffect(() => {
     if (!viewport) return;
-    viewport.camera.setView(viewMode === "2d" ? "top" : project.cameraPreset);
+    if (viewMode === "2d") {
+      viewport.camera.setView("top");
+    } else if (project.cameraPreset === "isometric") {
+      viewport.camera.setState(
+        sourceIsometricCameraState(viewport.camera.getState()),
+      );
+    } else {
+      viewport.camera.setView(project.cameraPreset);
+    }
     viewport.camera.setInputMap(interactive
       ? {}
       : {
@@ -660,31 +675,37 @@ export function ViewportPane({
     mesh.castShadow = showShadow && viewMode === "3d";
     mesh.receiveShadow = true;
 
+    const cutLineWidth = viewMode === "2d"
+      ? SOURCE_2D_CUT_LINE_WIDTH
+      : SOURCE_3D_CUT_LINE_WIDTH;
+    const creaseLineWidth = viewMode === "2d"
+      ? SOURCE_2D_CREASE_LINE_WIDTH
+      : SOURCE_3D_CREASE_LINE_WIDTH;
     const solidEdges = createFatEdges(data.solidEdgeGeometry, viewport, {
-      linewidth: 1.9,
+      linewidth: cutLineWidth,
       depthTest: viewMode !== "2d",
     });
     const dashedEdges = createFatEdges(data.dashedEdgeGeometry, viewport, {
       dashed: true,
-      linewidth: 1.7,
+      linewidth: creaseLineWidth,
       depthTest: viewMode !== "2d",
     });
     const occludedSolidEdges = viewMode === "3d"
       ? createFatEdges(data.solidEdgeGeometry, viewport, {
-          linewidth: 1.9,
+          linewidth: Math.min(cutLineWidth, 1),
           depthTest: true,
           depthFunc: GreaterDepth,
-          opacity: 0.14,
+          opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
           renderOrder: 2,
         })
       : null;
     const occludedDashedEdges = viewMode === "3d"
       ? createFatEdges(data.dashedEdgeGeometry, viewport, {
           dashed: true,
-          linewidth: 1.7,
+          linewidth: Math.min(creaseLineWidth, 0.9),
           depthTest: true,
           depthFunc: GreaterDepth,
-          opacity: 0.14,
+          opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
           renderOrder: 2,
         })
       : null;
@@ -723,14 +744,14 @@ export function ViewportPane({
         : data.positionsByEdge.get(hoveredFoldEdgeIndex),
     );
     const selectedLine = createFatEdges(selectedEdgeSource, viewport, {
-      color: SELECTED_EDGE_COLOR,
-      linewidth: 4.9,
+      color: viewMode === "2d" ? "#2f6fed" : SELECTED_EDGE_COLOR,
+      linewidth: viewMode === "2d" ? 2.7 : 2.2,
       depthTest: false,
       renderOrder: 19,
     });
     const hoverLine = createFatEdges(hoverEdgeSource, viewport, {
       color: HOVER_EDGE_COLOR,
-      linewidth: 3.9,
+      linewidth: viewMode === "2d" ? 2.5 : 2,
       depthTest: false,
       renderOrder: 20,
     });
@@ -753,7 +774,7 @@ export function ViewportPane({
       depthTest: viewMode !== "2d",
       side: DoubleSide,
     });
-    const lockedTintMesh = data.lockedTintGeometry
+    const lockedTintMesh = LOCKED_FACE_TINT_OPACITY > 0 && data.lockedTintGeometry
       ? new Mesh(data.lockedTintGeometry, lockedTintMaterial)
       : null;
     const selectedTintMesh = data.selectedTintGeometry

@@ -117,6 +117,8 @@ export type FoldSceneMeta = {
   creaseLineCount: number;
   lockedFaceCount: number;
   flipAll: boolean;
+  /** Physical board thickness after conversion into normalized scene units. */
+  visualThickness: number;
 };
 
 export type FoldSceneData = {
@@ -627,7 +629,15 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   model.edgesVertices.forEach(([va, vb], ei) => {
     const fcs = model.edgeFaces[ei];
     if (fcs.length === 0) return;
-    const style = resolveEdgeStyle(model, ei, foldStepIndex, edgeColorMode, false, false);
+    const style = resolveEdgeStyle(
+      model,
+      ei,
+      foldStepIndex,
+      edgeColorMode,
+      projection,
+      false,
+      false,
+    );
     const c = style.color ? new Color(style.color) : null;
 
     let ax = 0, ay = 0, az = 0, bx = 0, by = 0, bz = 0;
@@ -714,7 +724,12 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     geom.computeVertexNormals();
     return { geometry: geom, recipes };
   };
-  const lockedTint = buildTint((fi) => lockedFaces.has(fi), LOCKED_TINT_OFFSET);
+  // Selection replaces locked feedback instead of alpha-stacking two
+  // triangulated overlays on the same panel.
+  const lockedTint = buildTint(
+    (fi) => lockedFaces.has(fi) && fi !== selectedFaceIndex,
+    LOCKED_TINT_OFFSET,
+  );
   const selectedTint =
     selectedFaceIndex === null || selectedFaceIndex === undefined
       ? { geometry: null, recipes: [] }
@@ -797,6 +812,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       creaseLineCount,
       lockedFaceCount: lockedFaces.size,
       flipAll,
+      visualThickness,
     },
     positionLayout: {
       model,

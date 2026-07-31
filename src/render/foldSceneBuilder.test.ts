@@ -20,6 +20,46 @@ function disposeScene(scene: FoldSceneData): void {
 }
 
 describe("fold scene frame updates", () => {
+  it("keeps the Mailer Box physical thickness while excluding selection from locked tint", () => {
+    const project = createMailerBoxProject();
+    const model = project.foldModel;
+    if (!model) throw new Error("MailerBox fixture did not produce a fold model");
+    const selectedFaceIndex = model.keyframes[0]?.fixedFaceIndices[0];
+    if (selectedFaceIndex === undefined) {
+      throw new Error("MailerBox fixture is missing its fixed bottom panel");
+    }
+    const unselected = buildFoldScene({
+      model,
+      projection: "folded-3d",
+      foldStepIndex: 0,
+      foldAngle: 0,
+      thicknessMm: project.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+    });
+    const selected = buildFoldScene({
+      model,
+      projection: "folded-3d",
+      foldStepIndex: 0,
+      foldAngle: 0,
+      thicknessMm: project.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+      selectedFaceIndex,
+    });
+
+    expect(selected.meta.visualThickness).toBeCloseTo(
+      4.5 * selected.frameScale,
+      10,
+    );
+    expect(selected.selectedTintGeometry).not.toBeNull();
+    expect(selected.lockedTintGeometry?.getAttribute("position").count ?? 0)
+      .toBeLessThan(unselected.lockedTintGeometry?.getAttribute("position").count ?? 0);
+
+    disposeScene(unselected);
+    disposeScene(selected);
+  });
+
   it("reuses one structural scene while mutating frame positions in place", () => {
     const project = createMailerBoxProject();
     const model = project.foldModel;
