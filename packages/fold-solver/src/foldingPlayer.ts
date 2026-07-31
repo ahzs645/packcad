@@ -3,6 +3,7 @@ import {
   appendPriorTargets,
   measureCreaseAnglesDegrees,
   sourceStageConstraintAngles,
+  sourceStageFixedFaceIndices,
 } from "./foldPlaybackConstraints";
 import type { Vec3 } from "./foldSolver";
 import type { FoldingStep, PackagingProject } from "@packcad/format";
@@ -227,7 +228,7 @@ function advanceSourceReplayStep(
   const result = foldNewton(model, stageConstraintAngles, {
     maxIterations: 1,
     seed: positions,
-    fixedFaceIndices: keyframe.fixedFaceIndices,
+    fixedFaceIndices: sourceStageFixedFaceIndices(model, keyframe),
     fixedVertexIndices: keyframe.fixedVertexIndices,
     initialStepSize: player.solverStepSize,
   });

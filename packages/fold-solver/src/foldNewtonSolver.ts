@@ -26,7 +26,11 @@
 
 import { triangulateFace } from "@atelier/geometry";
 import type { FoldModel } from "@packcad/format";
-import { appendPriorTargets, sourceStageConstraintAngles } from "./foldPlaybackConstraints";
+import {
+  appendPriorTargets,
+  sourceStageConstraintAngles,
+  sourceStageFixedFaceIndices,
+} from "./foldPlaybackConstraints";
 import type { Vec3 } from "./foldSolver";
 
 type V3 = Vec3;
@@ -639,7 +643,7 @@ export function foldNewtonSequence(
     result = foldNewton(model, stageAngles, {
       maxIterations: cap,
       seed,
-      fixedFaceIndices: kf.fixedFaceIndices,
+      fixedFaceIndices: sourceStageFixedFaceIndices(model, kf),
       fixedVertexIndices: kf.fixedVertexIndices,
     });
     seed = result.positions;

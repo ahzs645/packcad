@@ -30,6 +30,10 @@ import { ViewportWorkspace } from "./components/ViewportWorkspace";
 import { foldModelToDrawing } from "./model/drawing";
 import { useFoldingPlayback } from "./model/foldingPlayback";
 import {
+  projectFromFileText,
+  projectFromUnknown,
+} from "./model/projectImport";
+import {
   defaultUiPreferences,
   loadUiPreferences,
   modeForSingleLayout,
@@ -230,8 +234,10 @@ export default function App() {
   ): Promise<void> => {
     try {
       await autosaveRef.current?.flush();
-      const snapshot = await documentStore.load(metadata.id);
-      if (!snapshot) throw new Error(`Draft “${metadata.name}” is unavailable.`);
+      const stored = await documentStore.load(metadata.id);
+      if (!stored) throw new Error(`Draft “${metadata.name}” is unavailable.`);
+      const snapshot = projectFromUnknown(stored);
+      await documentStore.save(metadata.id, metadata.name, snapshot);
       replaceEditor(createProjectEditor(snapshot, metadata));
       setActiveDocument({ id: metadata.id, name: metadata.name });
       setRestoredDraftName(null);
@@ -333,7 +339,7 @@ export default function App() {
   const openProjectFile = useCallback(async (file: File): Promise<void> => {
     try {
       await autosaveRef.current?.flush();
-      const snapshot = JSON.parse(await file.text()) as ProjectSnapshot;
+      const snapshot = projectFromFileText(await file.text());
       const identity = {
         id: makeUid("doc"),
         name: file.name.replace(/\.packcad(?:\.json)?$|\.json$/i, ""),
@@ -444,7 +450,9 @@ export default function App() {
           const snapshot = await documentStore.load(recent.id);
           if (cancelled) return;
           if (snapshot) {
-            replaceEditor(createProjectEditor(snapshot, recent));
+            const normalized = projectFromUnknown(snapshot);
+            await documentStore.save(recent.id, recent.name, normalized);
+            replaceEditor(createProjectEditor(normalized, recent));
             setActiveDocument({ id: recent.id, name: recent.name });
             setRestoredDraftName(recent.name);
             restored = true;

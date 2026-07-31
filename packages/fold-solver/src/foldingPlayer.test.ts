@@ -8,6 +8,7 @@ import {
 import {
   findCreaseEdgeBiconnectedComponents,
   sourceStageConstraintAngles,
+  sourceStageFixedFaceIndices,
 } from "./foldPlaybackConstraints";
 import { solveFoldTimeline } from "./foldTimelineSolver";
 import type { FoldModel } from "@packcad/format";
@@ -41,6 +42,7 @@ function cyclicFaceModel(): FoldModel {
 describe("PackCAD-style folding replay", () => {
   it("retains enforcePriorConstraints from every source operation", () => {
     const project = sourceProject();
+    expect(project.foldModel.keyframes.map((keyframe) => sourceStageFixedFaceIndices(project.foldModel, keyframe))).toEqual([]);
     expect(project.foldModel.keyframes).toHaveLength(5);
     expect(project.foldModel.keyframes.map((keyframe) => keyframe.enforcePriorConstraints)).toEqual([
       false,
@@ -66,6 +68,7 @@ describe("PackCAD-style folding replay", () => {
     const constraints = sourceStageConstraintAngles(model, keyframe, flat, {});
     expect(findCreaseEdgeBiconnectedComponents(model).map((component) => component.slice().sort())).toEqual([[0, 1, 2]]);
     expect(constraints).toEqual({ 0: 90 });
+    expect(sourceStageFixedFaceIndices(model, keyframe)).toEqual([0]);
   });
 
   it("keeps an attained prior fold while solving a later source stage", () => {

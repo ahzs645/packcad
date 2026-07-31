@@ -41,11 +41,13 @@ describe("fold scene material groups", () => {
     const frontTexture = new Texture();
     const backTexture = new Texture();
     const edgeTexture = new Texture();
+    const faceTexture = new Texture();
     const materials = createFoldSceneMaterials({
       viewMode: "3d",
       technical: false,
       showArtwork: true,
       useFaceColors: false,
+      faceTexture,
       frontArtworkTexture: frontTexture,
       backArtworkTexture: backTexture,
       edgeTexture,
@@ -56,22 +58,30 @@ describe("fold scene material groups", () => {
     expect(scene.timelineSolve.method).toBe("source-iterative");
     expect(scene.geometry.groups.map((group) => group.materialIndex)).toEqual([0, 1, 2]);
     expect(scene.geometry.groups.every((group) => group.count > 0)).toBe(true);
-    expect(materials.map((material) => material.map)).toEqual([
-      frontTexture,
-      backTexture,
+    expect(materials.base.map((material) => material.map)).toEqual([
+      faceTexture,
+      faceTexture,
       edgeTexture,
     ]);
-    expect(materials.map((material) => material.side)).toEqual([
+    expect(materials.base.map((material) => material.side)).toEqual([
       FrontSide,
       BackSide,
       DoubleSide,
     ]);
-    expect(materials.every((material) => material.color.getHex() !== 0x000000)).toBe(true);
+    expect(materials.artwork?.map((material) => material.map)).toEqual([
+      frontTexture,
+      backTexture,
+      null,
+    ]);
+    expect(materials.artwork?.slice(0, 2).every((material) =>
+      material.transparent && material.depthWrite === false && material.alphaTest > 0
+    )).toBe(true);
+    expect(materials.base.every((material) => material.color.getHex() !== 0x000000)).toBe(true);
     for (const group of scene.geometry.groups) {
       if (group.materialIndex === undefined) {
         throw new Error("Fold scene group has no material index");
       }
-      const material = materials[group.materialIndex];
+      const material = materials.base[group.materialIndex];
       expect(material).toBeDefined();
       expect(
         material.map !== null || material.color.getHex() !== 0x000000,
@@ -79,10 +89,12 @@ describe("fold scene material groups", () => {
     }
     expect(FOLD_SCENE_POST_PROCESSING).toBe(false);
 
-    for (const material of materials) material.dispose();
+    for (const material of materials.base) material.dispose();
+    for (const material of materials.artwork ?? []) material.dispose();
     frontTexture.dispose();
     backTexture.dispose();
     edgeTexture.dispose();
+    faceTexture.dispose();
     scene.geometry.dispose();
     scene.lockedTintGeometry?.dispose();
     scene.selectedTintGeometry?.dispose();

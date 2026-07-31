@@ -118,6 +118,12 @@ function configureArtworkTexture(texture: Texture): Texture {
   return texture;
 }
 
+// The captured FOLD UVs reserve most of the 0..1 atlas for the full dieline.
+// A stock swatch therefore needs two repeats across that atlas to match the
+// source's corrugation scale; one repeat makes individual flutes look like
+// broad, glossy bands after the sheet is folded.
+const MATERIAL_FACE_TEXTURE_REPEAT = 2;
+
 /**
  * Faithful port of packager/FoldScene.tsx's ArtworkPlacement texture transform.
  * The projection-dependent mirror is deliberately supplied by the caller.
@@ -288,6 +294,7 @@ export function ViewportPane({
   fluteAngle = 0,
 }: ViewportPaneProps) {
   const [viewport, setViewport] = useState<Viewport | null>(null);
+  const [faceMaterialTexture, setFaceMaterialTexture] = useState<Texture | null>(null);
   const [materialTexture, setMaterialTexture] = useState<Texture | null>(null);
   const [frontArtworkTexture, setFrontArtworkTexture] = useState<Texture | null>(null);
   const [backArtworkTexture, setBackArtworkTexture] = useState<Texture | null>(null);
@@ -355,6 +362,31 @@ export function ViewportPane({
       ? foldPlayback.solverMaxAngleErrorDeg
       : settlement?.maxAngleErrorDeg,
   };
+
+  useEffect(() => {
+    if (!viewport) return;
+    const definition = materials[project.material];
+    let cancelled = false;
+    setFaceMaterialTexture(null);
+    const texture = new TextureLoader().load(definition.texture, () => {
+      if (!cancelled) {
+        setFaceMaterialTexture(texture);
+        viewport.invalidate();
+      }
+    });
+    configureArtworkTexture(texture);
+    texture.wrapS = RepeatWrapping;
+    texture.wrapT = RepeatWrapping;
+    texture.repeat.set(
+      MATERIAL_FACE_TEXTURE_REPEAT,
+      MATERIAL_FACE_TEXTURE_REPEAT,
+    );
+    texture.needsUpdate = true;
+    return () => {
+      cancelled = true;
+      texture.dispose();
+    };
+  }, [project.material, viewport]);
 
   useEffect(() => {
     if (!viewport) return;
@@ -455,12 +487,14 @@ export function ViewportPane({
       technical: project.renderMode === "technical",
       showArtwork: panelColorMode === "artwork",
       useFaceColors: panelColorMode === "multicolor",
+      faceTexture: faceMaterialTexture,
       frontArtworkTexture: placedFrontArtworkTexture,
       backArtworkTexture: placedBackArtworkTexture,
       edgeTexture: materialTexture,
       edgeFallbackColor: materialDefinition.color,
     });
   }, [
+    faceMaterialTexture,
     materialTexture,
     panelColorMode,
     placedBackArtworkTexture,
@@ -471,7 +505,8 @@ export function ViewportPane({
   ]);
   useEffect(
     () => () => {
-      for (const material of foldSceneMaterials) material.dispose();
+      for (const material of foldSceneMaterials.base) material.dispose();
+      for (const material of foldSceneMaterials.artwork ?? []) material.dispose();
     },
     [foldSceneMaterials],
   );
@@ -670,10 +705,16 @@ export function ViewportPane({
     });
     sceneDataRef.current = data;
 
-    const [frontMaterial, backMaterial, edgeMaterial] = foldSceneMaterials;
-    const mesh = new Mesh(data.geometry, [frontMaterial, backMaterial, edgeMaterial]);
+    const mesh = new Mesh(data.geometry, foldSceneMaterials.base);
     mesh.castShadow = showShadow && viewMode === "3d";
     mesh.receiveShadow = true;
+    const artworkMesh = foldSceneMaterials.artwork
+      ? new Mesh(data.geometry, foldSceneMaterials.artwork)
+      : null;
+    if (artworkMesh) {
+      artworkMesh.name = "PackCAD print artwork";
+      artworkMesh.renderOrder = 1;
+    }
 
     const cutLineWidth = viewMode === "2d"
       ? SOURCE_2D_CUT_LINE_WIDTH
@@ -786,6 +827,7 @@ export function ViewportPane({
     const group = new Group();
     group.name = "PackCAD folded package";
     group.add(mesh);
+    if (artworkMesh) group.add(artworkMesh);
     if (lockedTintMesh) group.add(lockedTintMesh);
     if (selectedTintMesh) group.add(selectedTintMesh);
     if (occludedSolidEdges) group.add(occludedSolidEdges.line);

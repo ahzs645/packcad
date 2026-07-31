@@ -1,6 +1,10 @@
 import type { FoldKeyframe, FoldModel } from "@packcad/format";
 import { foldNewton } from "./foldNewtonSolver";
-import { appendPriorTargets, sourceStageConstraintAngles } from "./foldPlaybackConstraints";
+import {
+  appendPriorTargets,
+  sourceStageConstraintAngles,
+  sourceStageFixedFaceIndices,
+} from "./foldPlaybackConstraints";
 import type { Vec3 } from "./foldSolver";
 
 export type FoldTimelineSolveMethod = "flat" | "newton-sequence" | "source-iterative";
@@ -88,7 +92,7 @@ export function solveFoldTimeline(
     const solved = foldNewton(model, creaseAnglesDeg, {
       maxIterations: MAX_SOLVER_ITERATIONS,
       seed: positions,
-      fixedFaceIndices: keyframe.fixedFaceIndices,
+      fixedFaceIndices: sourceStageFixedFaceIndices(model, keyframe),
       fixedVertexIndices: keyframe.fixedVertexIndices,
     });
     positions = solved.positions;
