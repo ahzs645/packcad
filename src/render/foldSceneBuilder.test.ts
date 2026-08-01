@@ -6,6 +6,7 @@ import { BufferAttribute, BufferGeometry } from "three";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildFoldScene,
+  SOURCE_THICKNESS_DISPLAY_SCALE,
   updateFoldScenePositions,
   type FoldSceneData,
 } from "./foldSceneBuilder";
@@ -21,7 +22,7 @@ function disposeScene(scene: FoldSceneData): void {
 }
 
 describe("fold scene frame updates", () => {
-  it("keeps the Mailer Box physical thickness while excluding selection from locked tint", () => {
+  it("uses the source-calibrated Mailer Box shell while excluding selection from locked tint", () => {
     const project = createMailerBoxProject();
     const model = project.foldModel;
     if (!model) throw new Error("MailerBox fixture did not produce a fold model");
@@ -50,7 +51,7 @@ describe("fold scene frame updates", () => {
     });
 
     expect(selected.meta.visualThickness).toBeCloseTo(
-      4.5 * selected.frameScale,
+      4.5 * selected.frameScale * SOURCE_THICKNESS_DISPLAY_SCALE,
       10,
     );
     expect(selected.selectedTintGeometry).not.toBeNull();

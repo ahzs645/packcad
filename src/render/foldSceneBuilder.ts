@@ -35,6 +35,10 @@ const v3norm = (a: V3): V3 => {
 };
 
 const SCENE_EXTENT = 3; // post-normalization target span (foldSceneFrame scales to this)
+// The live renderer displays the nominal board thickness with a narrower shell
+// than a literal FOLD-unit extrusion. Keep the authored value unchanged in the
+// inspector and calibrate only its viewport representation.
+export const SOURCE_THICKNESS_DISPLAY_SCALE = 0.6;
 const CREASE_LINE_SURFACE_OFFSET = 0.006; // line epsilon above the front slab surface
 const LOCKED_TINT_OFFSET = 0.004; // tint sits under the lines, above the face
 const SELECTED_TINT_OFFSET = 0.005;
@@ -274,7 +278,9 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // shortcut made thickness depend on screen normalization and exaggerated
   // this px-based MailerBox by ~1.87×.
   const visualThickness = showThickness
-    ? thicknessMillimetresToFoldUnits(thicknessMm, model.coordinateUnit) * frame.scale
+    ? thicknessMillimetresToFoldUnits(thicknessMm, model.coordinateUnit)
+      * frame.scale
+      * SOURCE_THICKNESS_DISPLAY_SCALE
     : 0;
   const { front: fOff, back: bOff } = offsetExtents(visualThickness, direction);
 

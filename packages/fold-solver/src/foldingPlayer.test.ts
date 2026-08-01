@@ -7,6 +7,7 @@ import {
 } from "./foldingPlayer";
 import {
   findCreaseEdgeBiconnectedComponents,
+  resolvedKeyframeAngles,
   sourceStageConstraintAngles,
 } from "./foldPlaybackConstraints";
 import { solveFoldTimeline } from "./foldTimelineSolver";
@@ -66,6 +67,21 @@ describe("PackCAD-style folding replay", () => {
     const constraints = sourceStageConstraintAngles(model, keyframe, flat, {});
     expect(findCreaseEdgeBiconnectedComponents(model).map((component) => component.slice().sort())).toEqual([[0, 1, 2]]);
     expect(constraints).toEqual({ 0: 90 });
+  });
+
+  it("keeps source branch hints separate from authored UI angles", () => {
+    const keyframe = {
+      id: "return-fold",
+      label: "Return fold",
+      creaseAnglesDeg: { 2: 90, 3: 90 },
+      creaseBranchSigns: { 2: -1 as const },
+      creaseEdgeGroup: { 2: 0, 3: 0 },
+      fixedFaceIndices: [],
+      fixedVertexIndices: [],
+      enforcePriorConstraints: false,
+    };
+    expect(keyframe.creaseAnglesDeg).toEqual({ 2: 90, 3: 90 });
+    expect(resolvedKeyframeAngles(keyframe)).toEqual({ 2: -90, 3: 90 });
   });
 
   it("only keeps an attained prior fold when the source stage enforces it", () => {

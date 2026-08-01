@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getEnabledSourceArtwork } from "@packcad/format";
+import { foldNewtonSequence } from "./foldNewtonSolver";
 import { createMailerBoxProject } from "./sample";
 
 function dataUrlBytes(value: string | undefined): Uint8Array {
@@ -22,6 +23,33 @@ describe("live MailerBox source parity", () => {
       keyframe.enforcePriorConstraints)).toEqual([false, false, false, false, false]);
     expect(model.keyframes.every((keyframe) =>
       keyframe.fixedFaceIndices.includes(model.fixedFaceIndex))).toBe(true);
+  });
+
+  it("folds the K4 side returns outward and keeps the K5 lid upright", () => {
+    const model = createMailerBoxProject().foldModel;
+    if (!model) throw new Error("MailerBox fixture did not produce a fold model");
+    const solved = foldNewtonSequence(model);
+    const range = (faceIndex: number, axis: 0 | 1 | 2): [number, number] => {
+      const values = model.facesVertices[faceIndex].map(
+        (vertex) => solved.positions[vertex][axis],
+      );
+      return [Math.min(...values), Math.max(...values)];
+    };
+
+    expect(model.keyframes[3].creaseBranchSigns).toEqual({ 0: -1, 11: -1 });
+    const [rightReturnMinX] = range(6, 0);
+    const [, rightWallMaxX] = range(7, 0);
+    expect(rightReturnMinX).toBeGreaterThanOrEqual(rightWallMaxX - 1e-3);
+    const [, leftReturnMaxX] = range(15, 0);
+    const [leftWallMinX] = range(16, 0);
+    expect(leftReturnMaxX).toBeLessThanOrEqual(leftWallMinX + 1e-3);
+
+    const [lidMinY, lidMaxY] = range(2, 1);
+    const [lidMinZ, lidMaxZ] = range(2, 2);
+    expect(lidMaxY - lidMinY).toBeLessThan(1e-3);
+    expect(lidMaxZ - lidMinZ).toBeGreaterThan(200);
+    expect(solved.maxEdgeError).toBeLessThan(1e-6);
+    expect(solved.maxAngleErrorDeg).toBeLessThan(1e-4);
   });
 
   it("uses the live example's material, thickness, offset, and artwork placement", () => {

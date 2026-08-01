@@ -8,6 +8,7 @@ import {
 import { useRef } from "react";
 import { packCadLogo } from "../assets/sourceChrome";
 import { artworkImageSources } from "../model/artworkPlacement";
+import type { PackCadSampleDefinition } from "../model/sampleLibrary";
 import type { UiPreferences } from "../model/uiPreferences";
 import type { FoldStatusState } from "../render/foldStatus";
 import { Icon } from "./Icon";
@@ -48,8 +49,12 @@ interface SourceSidebarProps {
   foldStatus: FoldStatusState;
   drafts: LocalDocumentMetadata[];
   activeDocumentId: string;
-  openSection: "material" | "artwork" | null;
-  onSetOpenSection: (section: "material" | "artwork" | null) => void;
+  samples: readonly PackCadSampleDefinition[];
+  openSection: "samples" | "material" | "artwork" | null;
+  onSetOpenSection: (
+    section: "samples" | "material" | "artwork" | null,
+  ) => void;
+  onLoadSample: (sampleId: string) => void;
   onImport: (file: File) => void;
   onSelectMaterialSpec: (specId: string) => void;
   onSetThickness: (thicknessMm: number) => void;
@@ -78,8 +83,10 @@ export function SourceSidebar({
   foldStatus,
   drafts,
   activeDocumentId,
+  samples,
   openSection,
   onSetOpenSection,
+  onLoadSample,
   onImport,
   onSelectMaterialSpec,
   onSetThickness,
@@ -115,7 +122,7 @@ export function SourceSidebar({
         <img className="brand-logo" src={packCadLogo} alt="PackCAD logo" />
         <div>
           <strong>PackCAD Mockup</strong>
-          <span>v1.3.22</span>
+          <span>v1.3.31</span>
         </div>
       </div>
 
@@ -123,6 +130,45 @@ export function SourceSidebar({
         <div className="section-title source-section-title">
           <span>Setup</span>
         </div>
+        <button
+          type="button"
+          className={
+            openSection === "samples"
+              ? "workflow-item open"
+              : "workflow-item"
+          }
+          title="Sample Library"
+          aria-expanded={openSection === "samples"}
+          onClick={() => onSetOpenSection(
+            openSection === "samples" ? null : "samples",
+          )}
+        >
+          <Icon name="box" size={18} />
+          <span>Sample Library</span>
+        </button>
+        {openSection === "samples" ? (
+          <div className="workflow-panel sample-library" data-testid="sample-library">
+            {samples.map((sample) => (
+              <article className="sample-card" key={sample.id}>
+                <div className="sample-card-heading">
+                  <span className="sample-card-icon"><Icon name="package" size={18} /></span>
+                  <span>
+                    <strong>{sample.name}</strong>
+                    <small>{sample.source}</small>
+                  </span>
+                </div>
+                <p>{sample.description}</p>
+                <small className="sample-card-details">{sample.details}</small>
+                <button
+                  type="button"
+                  onClick={() => onLoadSample(sample.id)}
+                >
+                  Load sample
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : null}
         <button
           type="button"
           className="workflow-item active"

@@ -31,7 +31,11 @@ import {
 } from "./foldBranch";
 import { foldFaces, nonRigidMessage, type SolveStatus, type Vec3 } from "./foldSolver";
 import { foldNewton } from "./foldNewtonSolver";
-import { appendPriorTargets, sourceStageConstraintAngles } from "./foldPlaybackConstraints";
+import {
+  appendPriorTargets,
+  resolvedKeyframeAngles,
+  sourceStageConstraintAngles,
+} from "./foldPlaybackConstraints";
 
 type V3 = Vec3;
 const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -513,9 +517,10 @@ export function foldSequence(
   const base: Record<number, number> = {};
   let lastIters = 0;
   for (const kf of model.keyframes) {
+    const keyframeAngles = resolvedKeyframeAngles(kf);
     const cumulative = withInactiveCreaseCarryAngles(model, {
       ...base,
-      ...kf.creaseAnglesDeg,
+      ...keyframeAngles,
     });
     const baseAngles = withInactiveCreaseCarryAngles(model, base);
     let best: ConstrainedFold | null = null;
@@ -533,7 +538,7 @@ export function foldSequence(
     }
     positions = (best as ConstrainedFold).positions;
     lastIters += (best as ConstrainedFold).iterations;
-    Object.assign(base, kf.creaseAnglesDeg);
+    Object.assign(base, keyframeAngles);
   }
 
   // Final quality metrics against the full cumulative target.

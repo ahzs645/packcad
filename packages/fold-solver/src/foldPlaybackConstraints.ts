@@ -138,6 +138,19 @@ function isNearPrior(currentDegrees: number, priorDegrees: number): boolean {
   return Math.abs((currentDegrees - priorDegrees) * Math.PI / 180) <= PRIOR_ANGLE_TOLERANCE_RADIANS;
 }
 
+/** Resolve authored UI angles onto the source playback branch. */
+export function resolvedKeyframeAngles(
+  keyframe: FoldKeyframe,
+): Record<number, number> {
+  return Object.fromEntries(
+    Object.entries(keyframe.creaseAnglesDeg).map(([edgeKey, angle]) => {
+      const edge = Number(edgeKey);
+      const sign = keyframe.creaseBranchSigns?.[edge] ?? 1;
+      return [edge, Math.abs(angle) * sign];
+    }),
+  );
+}
+
 /** Reproduce OrigamiSimulation.__updateMergedConstraints from the source app.
  * Explicit targets always win. Prior targets are retained only when the stage
  * asks to enforce them and the incoming geometry is already within tolerance.
@@ -160,7 +173,7 @@ export function sourceStageConstraintAngles(
       if (current !== undefined && isNearPrior(current, prior)) merged[edge] = prior;
     }
   }
-  Object.assign(merged, keyframe.creaseAnglesDeg);
+  Object.assign(merged, resolvedKeyframeAngles(keyframe));
 
   for (const component of findCreaseEdgeBiconnectedComponents(model)) {
     if (component.some((edge) => edge in merged)) continue;
@@ -178,5 +191,5 @@ export function appendPriorTargets(
   priorTargets: Record<number, number>,
   keyframe: FoldKeyframe,
 ): Record<number, number> {
-  return { ...priorTargets, ...keyframe.creaseAnglesDeg };
+  return { ...priorTargets, ...resolvedKeyframeAngles(keyframe) };
 }

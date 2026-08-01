@@ -11,7 +11,7 @@ import { creaseColorForAssignment, type EdgeColorMode } from "./foldViewSettings
 
 export const BOUNDARY_EDGE_COLOR = "#050505";
 export const SOURCE_3D_CREASE_COLOR = "#f7f7f8";
-export const SOURCE_2D_CREASE_COLOR = "#18181b";
+export const SOURCE_2D_CREASE_COLOR = "#d4d4d8";
 export const HOVER_EDGE_COLOR = "#f59e0b";
 export const SELECTED_EDGE_COLOR = "#ffffff";
 

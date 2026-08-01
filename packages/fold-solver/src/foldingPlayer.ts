@@ -2,6 +2,7 @@ import { foldNewton } from "./foldNewtonSolver";
 import {
   appendPriorTargets,
   measureCreaseAnglesDegrees,
+  resolvedKeyframeAngles,
   sourceStageConstraintAngles,
 } from "./foldPlaybackConstraints";
 import type { Vec3 } from "./foldSolver";
@@ -202,9 +203,12 @@ function averageActiveAngle(
   const keyframe = model?.keyframes[stepIndex - 1];
   if (!model || !keyframe) return 0;
   const measured = measureCreaseAnglesDegrees(model, positions);
-  const activeEdges = Object.keys(keyframe.creaseAnglesDeg).map(Number);
+  const activeEdges = Object.keys(resolvedKeyframeAngles(keyframe)).map(Number);
   if (activeEdges.length === 0) return 0;
-  return activeEdges.reduce((sum, edge) => sum + (measured[edge] ?? 0), 0) / activeEdges.length;
+  return activeEdges.reduce(
+    (sum, edge) => sum + Math.abs(measured[edge] ?? 0),
+    0,
+  ) / activeEdges.length;
 }
 
 function advanceSourceReplayStep(

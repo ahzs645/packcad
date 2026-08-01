@@ -29,6 +29,13 @@ export type FoldKeyframe = {
   label: string;
   /** Crease angles introduced *by this keyframe*, keyed by FOLD edge index. */
   creaseAnglesDeg: Record<number, number>;
+  /**
+   * Optional per-crease branch chosen by the source simulation. PackCAD stores
+   * an unsigned UI angle for ambiguous flat hinges; this preserves the branch
+   * observed during source playback without changing the authored angle shown
+   * in the editor. Missing entries default to +1.
+   */
+  creaseBranchSigns?: Record<number, -1 | 1>;
   /** FOLD edge index -> index of the operation's foldingEdgeGroup that drives it.
    *  Lets the editor map a clicked crease back to the constraint it belongs to. */
   creaseEdgeGroup: Record<number, number>;

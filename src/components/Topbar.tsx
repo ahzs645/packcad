@@ -32,6 +32,7 @@ interface TopbarProps {
   onOpenPreferences: () => void;
   onToggleInspector: () => void;
   onNewProject: () => void;
+  onOpenSampleLibrary: () => void;
   onOpenProject: () => void;
   onImportDieline: () => void;
   onSaveProject: () => void;
@@ -67,6 +68,7 @@ export function Topbar({
   onOpenPreferences,
   onToggleInspector,
   onNewProject,
+  onOpenSampleLibrary,
   onOpenProject,
   onImportDieline,
   onSaveProject,
@@ -134,6 +136,14 @@ export function Topbar({
             <div className="dropdown-menu file-menu" role="menu">
               <button type="button" role="menuitem" onClick={() => choose(onNewProject)}>
                 New Project
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => choose(onOpenSampleLibrary)}
+              >
+                <Icon name="box" size={15} />
+                Sample Library...
               </button>
               <button type="button" role="menuitem" onClick={() => choose(onOpenProject)}>
                 <Icon name="upload" size={15} />

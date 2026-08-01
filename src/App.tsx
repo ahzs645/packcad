@@ -34,6 +34,10 @@ import {
   projectFromUnknown,
 } from "./model/projectImport";
 import {
+  createPackCadSampleProject,
+  packCadSampleLibrary,
+} from "./model/sampleLibrary";
+import {
   defaultUiPreferences,
   loadUiPreferences,
   modeForSingleLayout,
@@ -100,9 +104,9 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [mobileNoticeVisible, setMobileNoticeVisible] = useState(true);
-  const [openSection, setOpenSection] = useState<"material" | "artwork" | null>(
-    null,
-  );
+  const [openSection, setOpenSection] = useState<
+    "samples" | "material" | "artwork" | null
+  >(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferences, setPreferences] = useState<UiPreferences>(
     () => preferencesForLoadedProject(
@@ -259,6 +263,35 @@ export default function App() {
       });
     }
   }, [replaceEditor]);
+
+  const loadSample = useCallback(async (sampleId: string): Promise<void> => {
+    try {
+      await autosaveRef.current?.flush();
+      const definition = packCadSampleLibrary.find(
+        (sample) => sample.id === sampleId,
+      );
+      if (!definition) throw new Error(`Unknown PackCAD sample: ${sampleId}`);
+      const snapshot = createPackCadSampleProject(sampleId);
+      const identity = { id: makeUid("doc"), name: definition.name };
+      await documentStore.save(identity.id, identity.name, snapshot);
+      replaceEditor(createProjectEditor(snapshot, identity));
+      setActiveDocument(identity);
+      setRestoredDraftName(null);
+      setSaveState("saved");
+      setOpenSection(null);
+      setNotice(`Loaded sample: ${definition.name}`);
+      window.history.replaceState(null, "", window.location.pathname);
+      await refreshDrafts();
+    } catch (error) {
+      setSaveState("error");
+      setImportNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? error.message
+          : "Could not load the sample.",
+      });
+    }
+  }, [refreshDrafts, replaceEditor]);
 
   const saveAs = useCallback(async (): Promise<void> => {
     const requested = window.prompt("Draft name", activeDocument.name);
@@ -635,8 +668,10 @@ export default function App() {
         foldStatus={foldStatus}
         drafts={drafts}
         activeDocumentId={activeDocument.id}
+        samples={packCadSampleLibrary}
         openSection={openSection}
         onSetOpenSection={setOpenSection}
+        onLoadSample={(sampleId) => void loadSample(sampleId)}
         onImport={(file) => void importDielineFile(file)}
         onSelectMaterialSpec={selectMaterialSpec}
         onSetThickness={(thicknessMm) =>
@@ -700,6 +735,11 @@ export default function App() {
           }}
           onToggleInspector={() => setInspectorOpen((current) => !current)}
           onNewProject={() => void startFresh()}
+          onOpenSampleLibrary={() => {
+            setSidebarCollapsed(false);
+            setOpenSection("samples");
+            setNotice("Opened sample library");
+          }}
           onOpenProject={() => projectInputRef.current?.click()}
           onImportDieline={() => menuDielineInputRef.current?.click()}
           onSaveProject={saveProjectFile}

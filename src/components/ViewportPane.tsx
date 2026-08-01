@@ -73,7 +73,7 @@ import { sourceIsometricCameraState } from "../render/sourceCamera";
 const SOURCE_3D_CUT_LINE_WIDTH = 1.5;
 const SOURCE_3D_CREASE_LINE_WIDTH = 1;
 const SOURCE_2D_CUT_LINE_WIDTH = 1.5;
-const SOURCE_2D_CREASE_LINE_WIDTH = 1.25;
+const SOURCE_2D_CREASE_LINE_WIDTH = 1;
 const SOURCE_OCCLUDED_EDGE_OPACITY = 0.1;
 
 interface ViewportPaneProps {
