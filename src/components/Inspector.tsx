@@ -62,7 +62,7 @@ function formatThickness(
 ): string {
   return units === "mm"
     ? `${thicknessMm.toFixed(1)} mm`
-    : `${(thicknessMm / 25.4).toFixed(3)} in`;
+    : `${(thicknessMm / 25.4).toFixed(4)} in`;
 }
 
 export function Inspector({
@@ -436,7 +436,7 @@ export function Inspector({
             type="range"
             min="0.4"
             max="4"
-            step="0.1"
+            step="any"
             value={project.thicknessMm}
             onChange={(event) =>
               onSetThickness(event.currentTarget.valueAsNumber)}

@@ -13,6 +13,8 @@ export type PanelArtworkPlacement = Pick<
 export type ArtworkImageSources = {
   front: string | null;
   back: string | null;
+  frontName: string | null;
+  backName: string | null;
 };
 
 export function artworkImageSources(project: PackagingProject): ArtworkImageSources {
@@ -20,12 +22,27 @@ export function artworkImageSources(project: PackagingProject): ArtworkImageSour
     return {
       front: project.artwork.imageDataUrl ?? project.artwork.backImageDataUrl ?? null,
       back: project.artwork.backImageDataUrl ?? project.artwork.imageDataUrl ?? null,
+      frontName: project.artwork.imageDataUrl
+        ? project.artwork.imageName ?? null
+        : project.artwork.backImageName ?? null,
+      backName: project.artwork.backImageDataUrl
+        ? project.artwork.backImageName ?? null
+        : project.artwork.imageName ?? null,
     };
   }
   const sourceArtwork = getEnabledSourceArtwork(project.design);
   const front = sourceArtwork?.frontArtwork ?? sourceArtwork?.backArtwork ?? null;
   const back = sourceArtwork?.backArtwork ?? sourceArtwork?.frontArtwork ?? null;
-  return { front, back };
+  return {
+    front,
+    back,
+    frontName: sourceArtwork?.frontArtwork
+      ? sourceArtwork.frontArtworkFilename ?? null
+      : sourceArtwork?.backArtworkFilename ?? null,
+    backName: sourceArtwork?.backArtwork
+      ? sourceArtwork.backArtworkFilename ?? null
+      : sourceArtwork?.frontArtworkFilename ?? null,
+  };
 }
 
 export function artworkImageSource(project: PackagingProject): string | null {

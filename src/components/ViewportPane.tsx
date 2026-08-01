@@ -70,7 +70,7 @@ import type {
 } from "../render/foldViewSettings";
 import { sourceIsometricCameraState } from "../render/sourceCamera";
 
-const SOURCE_3D_CUT_LINE_WIDTH = 1.2;
+const SOURCE_3D_CUT_LINE_WIDTH = 1.5;
 const SOURCE_3D_CREASE_LINE_WIDTH = 1;
 const SOURCE_2D_CUT_LINE_WIDTH = 1.5;
 const SOURCE_2D_CREASE_LINE_WIDTH = 1.25;
@@ -106,6 +106,7 @@ function disposeSceneData(data: FoldSceneData): void {
   data.lockedTintGeometry?.dispose();
   data.selectedTintGeometry?.dispose();
   data.solidEdgeGeometry.dispose();
+  data.creaseEdgeGeometry.dispose();
   data.dashedEdgeGeometry.dispose();
   data.edgePickGeometry.dispose();
 }
@@ -303,8 +304,10 @@ export function ViewportPane({
   const hoverLineRef = useRef<FatEdges | null>(null);
   const selectedLineRef = useRef<FatEdges | null>(null);
   const solidEdgesRef = useRef<FatEdges | null>(null);
+  const creaseEdgesRef = useRef<FatEdges | null>(null);
   const dashedEdgesRef = useRef<FatEdges | null>(null);
   const occludedSolidEdgesRef = useRef<FatEdges | null>(null);
+  const occludedCreaseEdgesRef = useRef<FatEdges | null>(null);
   const occludedDashedEdgesRef = useRef<FatEdges | null>(null);
   const autoFitRef = useRef<{
     model: PackagingProject["foldModel"];
@@ -331,7 +334,7 @@ export function ViewportPane({
     if (!viewport || !sceneObjectRef.current) return;
     viewport.camera.fit(
       new Box3().setFromObject(sceneObjectRef.current),
-      viewMode === "2d" ? 1.08 : 1.35,
+      viewMode === "2d" ? 1.08 : 1.1,
     );
     viewport.invalidate();
   }, [viewMode, viewport]);
@@ -580,10 +583,15 @@ export function ViewportPane({
     if (!data || !viewport || viewMode === "2d") return;
     updateFoldScenePositions(data, foldPositionInputRef.current);
     updateFatEdgePositions(solidEdgesRef.current, data.solidEdgeGeometry);
+    updateFatEdgePositions(creaseEdgesRef.current, data.creaseEdgeGeometry);
     updateFatEdgePositions(dashedEdgesRef.current, data.dashedEdgeGeometry);
     updateFatEdgePositions(
       occludedSolidEdgesRef.current,
       data.solidEdgeGeometry,
+    );
+    updateFatEdgePositions(
+      occludedCreaseEdgesRef.current,
+      data.creaseEdgeGeometry,
     );
     updateFatEdgePositions(
       occludedDashedEdgesRef.current,
@@ -733,6 +741,10 @@ export function ViewportPane({
       linewidth: cutLineWidth,
       depthTest: viewMode !== "2d",
     });
+    const creaseEdges = createFatEdges(data.creaseEdgeGeometry, viewport, {
+      linewidth: creaseLineWidth,
+      depthTest: viewMode !== "2d",
+    });
     const dashedEdges = createFatEdges(data.dashedEdgeGeometry, viewport, {
       dashed: true,
       linewidth: creaseLineWidth,
@@ -741,6 +753,15 @@ export function ViewportPane({
     const occludedSolidEdges = viewMode === "3d"
       ? createFatEdges(data.solidEdgeGeometry, viewport, {
           linewidth: Math.min(cutLineWidth, 1),
+          depthTest: true,
+          depthFunc: GreaterDepth,
+          opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
+          renderOrder: 2,
+        })
+      : null;
+    const occludedCreaseEdges = viewMode === "3d"
+      ? createFatEdges(data.creaseEdgeGeometry, viewport, {
+          linewidth: Math.min(creaseLineWidth, 0.9),
           depthTest: true,
           depthFunc: GreaterDepth,
           opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
@@ -758,8 +779,10 @@ export function ViewportPane({
         })
       : null;
     solidEdgesRef.current = solidEdges;
+    creaseEdgesRef.current = creaseEdges;
     dashedEdgesRef.current = dashedEdges;
     occludedSolidEdgesRef.current = occludedSolidEdges;
+    occludedCreaseEdgesRef.current = occludedCreaseEdges;
     occludedDashedEdgesRef.current = occludedDashedEdges;
     const updateDashScale = (): void => {
       if (viewMode !== "2d") return;
@@ -838,9 +861,11 @@ export function ViewportPane({
     if (lockedTintMesh) group.add(lockedTintMesh);
     if (selectedTintMesh) group.add(selectedTintMesh);
     if (occludedSolidEdges) group.add(occludedSolidEdges.line);
+    if (occludedCreaseEdges) group.add(occludedCreaseEdges.line);
     if (occludedDashedEdges) group.add(occludedDashedEdges.line);
     group.add(
       solidEdges.line,
+      creaseEdges.line,
       dashedEdges.line,
       edgePickLines,
       selectedLine.line,
@@ -848,8 +873,10 @@ export function ViewportPane({
     );
     const fatEdgeLayers = [
       solidEdges,
+      creaseEdges,
       dashedEdges,
       occludedSolidEdges,
+      occludedCreaseEdges,
       occludedDashedEdges,
       selectedLine,
       hoverLine,
@@ -874,7 +901,7 @@ export function ViewportPane({
       autoFitRef.current = { model, viewMode };
       viewport.camera.fit(
         new Box3().setFromObject(group),
-        viewMode === "2d" ? 1.08 : compact ? 1.55 : 1.35,
+        viewMode === "2d" ? 1.08 : compact ? 1.55 : 1.1,
       );
     }
     viewport.invalidate();
@@ -886,9 +913,13 @@ export function ViewportPane({
       if (selectedLineRef.current === selectedLine) selectedLineRef.current = null;
       if (hoverLineRef.current === hoverLine) hoverLineRef.current = null;
       if (solidEdgesRef.current === solidEdges) solidEdgesRef.current = null;
+      if (creaseEdgesRef.current === creaseEdges) creaseEdgesRef.current = null;
       if (dashedEdgesRef.current === dashedEdges) dashedEdgesRef.current = null;
       if (occludedSolidEdgesRef.current === occludedSolidEdges) {
         occludedSolidEdgesRef.current = null;
+      }
+      if (occludedCreaseEdgesRef.current === occludedCreaseEdges) {
+        occludedCreaseEdgesRef.current = null;
       }
       if (occludedDashedEdgesRef.current === occludedDashedEdges) {
         occludedDashedEdgesRef.current = null;
@@ -902,10 +933,14 @@ export function ViewportPane({
       viewport.scene.remove(group);
       solidEdges.geometry.dispose();
       solidEdges.material.dispose();
+      creaseEdges.geometry.dispose();
+      creaseEdges.material.dispose();
       dashedEdges.geometry.dispose();
       dashedEdges.material.dispose();
       occludedSolidEdges?.geometry.dispose();
       occludedSolidEdges?.material.dispose();
+      occludedCreaseEdges?.geometry.dispose();
+      occludedCreaseEdges?.material.dispose();
       occludedDashedEdges?.geometry.dispose();
       occludedDashedEdges?.material.dispose();
       edgePickMaterial.dispose();

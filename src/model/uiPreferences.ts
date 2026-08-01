@@ -4,6 +4,10 @@ import {
   type EdgeColorMode,
   type PanelColorMode,
 } from "../render/foldViewSettings";
+import {
+  getEnabledSourceArtwork,
+  type PackagingProject,
+} from "@packcad/format";
 
 export type ViewLayout =
   | "split-horizontal"
@@ -12,7 +16,7 @@ export type ViewLayout =
   | "single-2d";
 
 export type UiPreferences = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   darkMode: boolean;
   units: "mm" | "in";
   viewLayout: ViewLayout;
@@ -30,10 +34,14 @@ export type UiPreferences = {
 
 export const UI_PREFERENCES_STORAGE_KEY = "packcad-ui-preferences";
 
+type StoredUiPreferences = Partial<Omit<UiPreferences, "schemaVersion">> & {
+  schemaVersion?: number;
+};
+
 export const defaultUiPreferences: UiPreferences = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   darkMode: false,
-  units: "mm",
+  units: "in",
   viewLayout: "single-3d",
   panelColorMode: "artwork",
   edgeColorMode: "mountain-valley",
@@ -42,15 +50,51 @@ export const defaultUiPreferences: UiPreferences = {
   origin: true,
   backgroundColor: "#f2f2f3",
   cameraType: "orthographic",
-  fluteSize: "F Flute",
+  fluteSize: "E Flute",
   fluteAngle: 0,
   offsetDirection: "bottom",
 };
 
-export function normalizeUiPreferences(
-  candidate: Partial<UiPreferences>,
+/** The bundled live-site example owns its initial presentation. Applying these
+ * settings at document load prevents unrelated preferences left by another
+ * project from changing the example's material, camera, or render appearance.
+ * The normal preference controls remain editable after the document is open.
+ */
+export function preferencesForLoadedProject(
+  project: PackagingProject,
+  preferences: UiPreferences,
 ): UiPreferences {
-  const next = { ...defaultUiPreferences, ...candidate };
+  const sourceArtwork = getEnabledSourceArtwork(project.design);
+  const isLiveMailerBoxExample = project.design?.name === "MailerBox"
+    && sourceArtwork?.frontArtworkFilename === "MailerBox-exterior.png"
+    && sourceArtwork?.backArtworkFilename === "MailerBox-interior.png"
+    && project.foldModel?.verticesCoords.length === 74
+    && project.foldModel.facesVertices.length === 19;
+
+  return isLiveMailerBoxExample
+    ? { ...defaultUiPreferences }
+    : preferences;
+}
+
+export function normalizeUiPreferences(
+  candidate: StoredUiPreferences,
+): UiPreferences {
+  const next: UiPreferences = {
+    ...defaultUiPreferences,
+    ...candidate,
+    schemaVersion: 4,
+  };
+  // v4 aligns the built-in Mailer Box with the live example. Only replace the
+  // old stock defaults so deliberately selected non-default flute sizes remain
+  // intact when an existing local preference record is upgraded.
+  if (candidate.schemaVersion !== 4) {
+    if (candidate.units === undefined || candidate.units === "mm") {
+      next.units = defaultUiPreferences.units;
+    }
+    if (candidate.fluteSize === undefined || candidate.fluteSize === "F Flute") {
+      next.fluteSize = defaultUiPreferences.fluteSize;
+    }
+  }
   if (
     !panelColorModeOptions.some((option) => option.value === next.panelColorMode)
   ) {
@@ -61,7 +105,6 @@ export function normalizeUiPreferences(
   ) {
     next.edgeColorMode = defaultUiPreferences.edgeColorMode;
   }
-  next.schemaVersion = 3;
   return next;
 }
 
@@ -70,7 +113,7 @@ export function loadUiPreferences(): UiPreferences {
     const saved = window.localStorage.getItem(UI_PREFERENCES_STORAGE_KEY);
     if (!saved) return defaultUiPreferences;
     return normalizeUiPreferences(
-      JSON.parse(saved) as Partial<UiPreferences>,
+      JSON.parse(saved) as StoredUiPreferences,
     );
   } catch {
     return defaultUiPreferences;

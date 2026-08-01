@@ -37,6 +37,7 @@ import {
   defaultUiPreferences,
   loadUiPreferences,
   modeForSingleLayout,
+  preferencesForLoadedProject,
   UI_PREFERENCES_STORAGE_KEY,
   viewLayoutNotice,
   type UiPreferences,
@@ -104,7 +105,10 @@ export default function App() {
   );
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferences, setPreferences] = useState<UiPreferences>(
-    loadUiPreferences,
+    () => preferencesForLoadedProject(
+      initialEditor.content,
+      loadUiPreferences(),
+    ),
   );
   const [fitNonce, setFitNonce] = useState(0);
   const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null);
@@ -135,6 +139,8 @@ export default function App() {
   const replaceEditor = useCallback((
     nextEditor: typeof initialEditor,
   ): void => {
+    setPreferences((current) =>
+      preferencesForLoadedProject(nextEditor.content, current));
     setEditor((current) => {
       if (current !== nextEditor) current.dispose();
       return nextEditor;
@@ -582,7 +588,11 @@ export default function App() {
 
   const selectStep = useCallback((stepId: string): void => {
     foldingPlayback.seek(stepId);
-    setSelectedFaceIndex(null);
+    const stepIndex = state.content.foldingSteps.findIndex((step) => step.id === stepId);
+    const setupFace = state.content.foldModel?.fixedFaceIndex;
+    setSelectedFaceIndex(
+      stepIndex === 0 && setupFace !== undefined ? setupFace : null,
+    );
     setSelectedFoldEdgeIndex(null);
     setHoveredFoldEdgeIndex(null);
     state.execute("fold.selectStep", { stepId });

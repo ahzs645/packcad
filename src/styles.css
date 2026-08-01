@@ -273,12 +273,26 @@ input[type="number"] {
   font-weight: 600;
 }
 
-.artwork-upload img {
+.artwork-preview {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.artwork-preview img {
   width: 100%;
   height: 38px;
   object-fit: contain;
   border-radius: 4px;
   background: #f4f4f5;
+}
+
+.artwork-preview small {
+  overflow: hidden;
+  color: #71717a;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .artwork-upload input {

@@ -15,6 +15,7 @@ function disposeScene(scene: FoldSceneData): void {
   scene.lockedTintGeometry?.dispose();
   scene.selectedTintGeometry?.dispose();
   scene.solidEdgeGeometry.dispose();
+  scene.creaseEdgeGeometry.dispose();
   scene.dashedEdgeGeometry.dispose();
   scene.edgePickGeometry.dispose();
 }
@@ -55,6 +56,8 @@ describe("fold scene frame updates", () => {
     expect(selected.selectedTintGeometry).not.toBeNull();
     expect(selected.lockedTintGeometry?.getAttribute("position").count ?? 0)
       .toBeLessThan(unselected.lockedTintGeometry?.getAttribute("position").count ?? 0);
+    expect(selected.solidEdgeGeometry.getAttribute("position").count).toBeGreaterThan(0);
+    expect(selected.creaseEdgeGeometry.getAttribute("position").count).toBeGreaterThan(0);
 
     disposeScene(unselected);
     disposeScene(selected);
@@ -84,6 +87,7 @@ describe("fold scene frame updates", () => {
     const positionArray = positionAttribute.array as Float32Array;
     const initialPositions = positionArray.slice();
     const solidGeometry = scene.solidEdgeGeometry;
+    const creaseGeometry = scene.creaseEdgeGeometry;
     const dashedGeometry = scene.dashedEdgeGeometry;
     const pickGeometry = scene.edgePickGeometry;
     const pickArray = (
@@ -115,6 +119,7 @@ describe("fold scene frame updates", () => {
     expect(scene.geometry.getAttribute("position")).toBe(positionAttribute);
     expect(scene.geometry.getAttribute("position").array).toBe(positionArray);
     expect(scene.solidEdgeGeometry).toBe(solidGeometry);
+    expect(scene.creaseEdgeGeometry).toBe(creaseGeometry);
     expect(scene.dashedEdgeGeometry).toBe(dashedGeometry);
     expect(scene.edgePickGeometry).toBe(pickGeometry);
     expect(pickGeometry.getAttribute("position").array).toBe(pickArray);
@@ -183,6 +188,10 @@ describe("fold scene frame updates", () => {
       expect(maximumDelta(
         scene.solidEdgeGeometry.getAttribute("position").array as Float32Array,
         fresh.solidEdgeGeometry.getAttribute("position").array as Float32Array,
+      )).toBeLessThan(1e-6);
+      expect(maximumDelta(
+        scene.creaseEdgeGeometry.getAttribute("position").array as Float32Array,
+        fresh.creaseEdgeGeometry.getAttribute("position").array as Float32Array,
       )).toBeLessThan(1e-6);
       expect(maximumDelta(
         scene.dashedEdgeGeometry.getAttribute("position").array as Float32Array,

@@ -7,6 +7,7 @@ import {
 } from "@packcad/format";
 import { useRef } from "react";
 import { packCadLogo } from "../assets/sourceChrome";
+import { artworkImageSources } from "../model/artworkPlacement";
 import type { UiPreferences } from "../model/uiPreferences";
 import type { FoldStatusState } from "../render/foldStatus";
 import { Icon } from "./Icon";
@@ -36,7 +37,7 @@ function formatThickness(
 ): string {
   return units === "mm"
     ? `${thicknessMm.toFixed(1)} mm`
-    : `${(thicknessMm / 25.4).toFixed(3)} in`;
+    : `${(thicknessMm / 25.4).toFixed(4)} in`;
 }
 
 interface SourceSidebarProps {
@@ -98,10 +99,7 @@ export function SourceSidebar({
   const keyframeStatus = foldStatus.status === "ready"
     ? new Map(foldStatus.summary.keyframes.map((item) => [item.id, item]))
     : new Map<string, { status: "Solved" | "Non-Rigid" }>();
-  const sources = {
-    front: project.artwork.imageDataUrl ?? null,
-    back: project.artwork.backImageDataUrl ?? null,
-  };
+  const sources = artworkImageSources(project);
 
   const readArtworkFile = async (
     file: File | undefined,
@@ -217,7 +215,7 @@ export function SourceSidebar({
                 type="range"
                 min="0.4"
                 max="4"
-                step="0.1"
+                step="any"
                 value={project.thicknessMm}
                 onChange={(event) =>
                   onSetThickness(event.currentTarget.valueAsNumber)}
@@ -270,10 +268,15 @@ export function SourceSidebar({
               <label className="artwork-upload" key={side}>
                 <span>{side === "front" ? "Exterior" : "Interior"}</span>
                 {sources[side] ? (
-                  <img
-                    src={sources[side] ?? undefined}
-                    alt={`${side === "front" ? "Exterior" : "Interior"} artwork`}
-                  />
+                  <span className="artwork-preview">
+                    <img
+                      src={sources[side] ?? undefined}
+                      alt={`${side === "front" ? "Exterior" : "Interior"} artwork`}
+                    />
+                    <small>{side === "front"
+                      ? sources.frontName
+                      : sources.backName}</small>
+                  </span>
                 ) : (
                   <span className="artwork-upload-empty">Upload image</span>
                 )}

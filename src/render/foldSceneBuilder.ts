@@ -1,7 +1,7 @@
 // Framework-agnostic builder that turns a FoldModel + fold state into all the
 // geometry the views render: the per-face thickness shell (front/back/edge
-// groups), a triangle->face map for raycast selection, unified edge lines
-// (solid + dashed) tagged per-edge, a locked/selected face tint, and a pick
+// groups), a triangle->face map for raycast selection, cut + solid-crease +
+// dashed-crease lines tagged per-edge, a locked/selected face tint, and a pick
 // geometry for hover. BOTH the folded 3D view and the flat 2D view build from
 // this so they agree by construction.
 
@@ -92,6 +92,7 @@ type FoldEdgePositionLayout = {
   frontBIndices: number[];
   pickPositionOffset: number;
   solidPositionOffset?: number;
+  creasePositionOffset?: number;
   dashedPositionOffset?: number;
   dashedDistanceOffset?: number;
 };
@@ -129,9 +130,11 @@ export type FoldSceneData = {
   /** translucent overlay of the locked faces' front triangles (null if none). */
   lockedTintGeometry: BufferGeometry | null;
   selectedTintGeometry: BufferGeometry | null;
-  /** boundary + locked edges, solid; LineSegments + vertex colors. */
+  /** cut boundaries, solid; LineSegments + vertex colors. */
   solidEdgeGeometry: BufferGeometry;
-  /** crease edges, dashed; LineSegments + vertex colors + lineDistance. */
+  /** solid crease edges; LineSegments + vertex colors. */
+  creaseEdgeGeometry: BufferGeometry;
+  /** dashed crease edges; LineSegments + vertex colors + lineDistance. */
   dashedEdgeGeometry: BufferGeometry;
   /** every edge as plain segments for raycast hover (position only). */
   edgePickGeometry: BufferGeometry;
@@ -614,6 +617,8 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // --- unified edge lines ----------------------------------------------------
   const solidPos: number[] = [];
   const solidCol: number[] = [];
+  const creasePos: number[] = [];
+  const creaseCol: number[] = [];
   const dashedPos: number[] = [];
   const dashedCol: number[] = [];
   const dashedDist: number[] = [];
@@ -676,7 +681,12 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     edgeLayouts.push(edgeLayout);
 
     if (!c) return;
-    if (style.dashed) {
+    const isBoundary = model.edgesAssignment[ei] === "B" || fcs.length < 2;
+    if (isBoundary) {
+      edgeLayout.solidPositionOffset = solidPos.length;
+      solidPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
+      solidCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    } else if (style.dashed) {
       edgeLayout.dashedPositionOffset = dashedPos.length;
       edgeLayout.dashedDistanceOffset = dashedDist.length;
       dashedPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
@@ -685,9 +695,10 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       dashedDist.push(0, len);
       creaseLineCount += 1;
     } else {
-      edgeLayout.solidPositionOffset = solidPos.length;
-      solidPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
-      solidCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      edgeLayout.creasePositionOffset = creasePos.length;
+      creasePos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
+      creaseCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      creaseLineCount += 1;
     }
   });
 
@@ -778,6 +789,10 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   solidEdgeGeometry.setAttribute("position", new Float32BufferAttribute(solidPos, 3));
   solidEdgeGeometry.setAttribute("color", new Float32BufferAttribute(solidCol, 3));
 
+  const creaseEdgeGeometry = new BufferGeometry();
+  creaseEdgeGeometry.setAttribute("position", new Float32BufferAttribute(creasePos, 3));
+  creaseEdgeGeometry.setAttribute("color", new Float32BufferAttribute(creaseCol, 3));
+
   const dashedEdgeGeometry = new BufferGeometry();
   dashedEdgeGeometry.setAttribute("position", new Float32BufferAttribute(dashedPos, 3));
   dashedEdgeGeometry.setAttribute("color", new Float32BufferAttribute(dashedCol, 3));
@@ -792,6 +807,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     lockedTintGeometry: lockedTint.geometry,
     selectedTintGeometry: selectedTint.geometry,
     solidEdgeGeometry,
+    creaseEdgeGeometry,
     dashedEdgeGeometry,
     edgePickGeometry,
     segmentEdgeIndex: Int32Array.from(segmentEdgeIndex),
@@ -991,6 +1007,8 @@ export function updateFoldScenePositions(
 
   const solidAttribute = data.solidEdgeGeometry.getAttribute("position");
   const solidPositions = solidAttribute.array as Float32Array;
+  const creaseAttribute = data.creaseEdgeGeometry.getAttribute("position");
+  const creasePositions = creaseAttribute.array as Float32Array;
   const dashedAttribute = data.dashedEdgeGeometry.getAttribute("position");
   const dashedPositions = dashedAttribute.array as Float32Array;
   const dashedDistanceAttribute =
@@ -1030,6 +1048,9 @@ export function updateFoldScenePositions(
     if (edge.solidPositionOffset !== undefined) {
       writeLineSegment(solidPositions, edge.solidPositionOffset, a, b);
     }
+    if (edge.creasePositionOffset !== undefined) {
+      writeLineSegment(creasePositions, edge.creasePositionOffset, a, b);
+    }
     if (edge.dashedPositionOffset !== undefined) {
       writeLineSegment(dashedPositions, edge.dashedPositionOffset, a, b);
     }
@@ -1039,11 +1060,14 @@ export function updateFoldScenePositions(
     }
   }
   solidAttribute.needsUpdate = true;
+  creaseAttribute.needsUpdate = true;
   dashedAttribute.needsUpdate = true;
   dashedDistanceAttribute.needsUpdate = true;
   pickAttribute.needsUpdate = true;
   data.solidEdgeGeometry.computeBoundingBox();
   data.solidEdgeGeometry.computeBoundingSphere();
+  data.creaseEdgeGeometry.computeBoundingBox();
+  data.creaseEdgeGeometry.computeBoundingSphere();
   data.dashedEdgeGeometry.computeBoundingBox();
   data.dashedEdgeGeometry.computeBoundingSphere();
   data.edgePickGeometry.computeBoundingBox();

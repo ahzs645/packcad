@@ -1,8 +1,20 @@
 import { createMailerBoxProject } from "@packcad/fold-solver";
 import { describe, expect, it } from "vitest";
-import { artworkPlacementForFace } from "./artworkPlacement";
+import {
+  artworkImageSources,
+  artworkPlacementForFace,
+} from "./artworkPlacement";
 
 describe("artwork panel placement", () => {
+  it("exposes the live Mailer Box artwork and filenames in the setup panel", () => {
+    const sources = artworkImageSources(createMailerBoxProject());
+
+    expect(sources.front?.startsWith("data:image/png;base64,")).toBe(true);
+    expect(sources.back?.startsWith("data:image/png;base64,")).toBe(true);
+    expect(sources.frontName).toBe("MailerBox-exterior.png");
+    expect(sources.backName).toBe("MailerBox-interior.png");
+  });
+
   it("centres legacy artwork coordinates on a panel UV centroid", () => {
     const model = createMailerBoxProject().foldModel;
     if (!model) throw new Error("Mailer Box fixture did not produce a fold model");

@@ -35,4 +35,16 @@ describe("source edge appearance", () => {
     expect(SELECTED_FACE_TINT).toBe("#1677ff");
     expect(SELECTED_EDGE_COLOR).toBe("#ffffff");
   });
+
+  it("does not recolor edges merely because their panel is fixed", () => {
+    const lockedBoundary = model.edgesAssignment.findIndex((assignment, edgeIndex) =>
+      assignment === "B"
+      && resolveEdgeStyle(
+        model, edgeIndex, 5, "mountain-valley", "folded-3d", false, false,
+      ).kind === "locked");
+    expect(lockedBoundary).toBeGreaterThanOrEqual(0);
+    expect(resolveEdgeStyle(
+      model, lockedBoundary, 5, "mountain-valley", "folded-3d", false, false,
+    )).toMatchObject({ color: BOUNDARY_EDGE_COLOR, dashed: false });
+  });
 });

@@ -220,11 +220,11 @@ export function PreferencesDialog({
             <input
               type="number"
               min="0"
-              step={preferences.units === "mm" ? "0.1" : "0.001"}
+              step={preferences.units === "mm" ? "0.1" : "0.0001"}
               value={
                 preferences.units === "mm"
                   ? project.thicknessMm.toFixed(1)
-                  : (project.thicknessMm / 25.4).toFixed(3)
+                  : (project.thicknessMm / 25.4).toFixed(4)
               }
               onChange={(event) => {
                 const value = event.currentTarget.valueAsNumber;

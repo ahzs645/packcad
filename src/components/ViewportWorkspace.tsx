@@ -87,11 +87,7 @@ export function ViewportWorkspace({
       showGroundPlane={preferences.groundPlane}
       showOrigin={preferences.origin}
       showShadow={preferences.shadow}
-      backgroundColor={
-        preferences.darkMode
-          ? preferences.backgroundColor
-          : mode === "2d" ? "#f2f2f3" : "#ffffff"
-      }
+      backgroundColor={preferences.backgroundColor}
       compact={options.compact}
       interactive={options.interactive}
       fitNonce={fitNonce}

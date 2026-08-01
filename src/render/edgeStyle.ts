@@ -12,7 +12,6 @@ import { creaseColorForAssignment, type EdgeColorMode } from "./foldViewSettings
 export const BOUNDARY_EDGE_COLOR = "#050505";
 export const SOURCE_3D_CREASE_COLOR = "#f7f7f8";
 export const SOURCE_2D_CREASE_COLOR = "#18181b";
-export const LOCKED_EDGE_COLOR = "#ffffff";
 export const HOVER_EDGE_COLOR = "#f59e0b";
 export const SELECTED_EDGE_COLOR = "#ffffff";
 
@@ -77,13 +76,10 @@ export function resolveEdgeStyle(
   let widthScale = 1;
   let renderTier = 1;
 
-  // Locked edges read as a continuous fixed-panel border in every mode.
-  if (kind === "locked") {
-    color = presentation === "folded-3d" ? LOCKED_EDGE_COLOR : "#2f6fed";
-    dashed = false;
-    widthScale = 1;
-    renderTier = 2;
-  }
+  // A fixed panel changes solver behavior, not the printed edge language. The
+  // source keeps its cut boundaries black and its crease assignment colors;
+  // painting every edge beside a fixed face white created the bright doubled
+  // seams visible in the rebuilt view.
   if (selected) {
     color = SELECTED_EDGE_COLOR;
     dashed = false;

@@ -257,6 +257,7 @@ describe("PackCAD editor integration", () => {
     sceneData.lockedTintGeometry?.dispose();
     sceneData.selectedTintGeometry?.dispose();
     sceneData.solidEdgeGeometry.dispose();
+    sceneData.creaseEdgeGeometry.dispose();
     sceneData.dashedEdgeGeometry.dispose();
     sceneData.edgePickGeometry.dispose();
   });

@@ -99,6 +99,7 @@ describe("fold scene material groups", () => {
     scene.lockedTintGeometry?.dispose();
     scene.selectedTintGeometry?.dispose();
     scene.solidEdgeGeometry.dispose();
+    scene.creaseEdgeGeometry.dispose();
     scene.dashedEdgeGeometry.dispose();
     scene.edgePickGeometry.dispose();
   });
