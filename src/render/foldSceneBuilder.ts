@@ -34,6 +34,80 @@ const v3norm = (a: V3): V3 => {
   return [a[0] / l, a[1] / l, a[2] / l];
 };
 
+type FacePointWeights = {
+  vertexIndices: [number, number, number];
+  weights: [number, number, number];
+};
+
+function bezierPoint(
+  start: readonly number[],
+  controls: readonly number[][],
+  end: readonly number[],
+  t: number,
+): [number, number] {
+  const points = [start, ...controls, end].map((point) => [point[0], point[1]]);
+  for (let level = points.length - 1; level > 0; level -= 1) {
+    for (let index = 0; index < level; index += 1) {
+      points[index][0] += (points[index + 1][0] - points[index][0]) * t;
+      points[index][1] += (points[index + 1][1] - points[index][1]) * t;
+    }
+  }
+  return [points[0][0], points[0][1]];
+}
+
+function facePointWeights(
+  model: FoldModel,
+  faceIndex: number,
+  point: readonly [number, number],
+): FacePointWeights {
+  const loop = model.facesVertices[faceIndex];
+  for (let aIndex = 0; aIndex < loop.length - 2; aIndex += 1) {
+    for (let bIndex = aIndex + 1; bIndex < loop.length - 1; bIndex += 1) {
+      for (let cIndex = bIndex + 1; cIndex < loop.length; cIndex += 1) {
+        const indices: [number, number, number] = [
+          loop[aIndex],
+          loop[bIndex],
+          loop[cIndex],
+        ];
+        const [a, b, c] = indices.map((index) => model.verticesCoords[index]);
+        const denominator =
+          (b[1] - c[1]) * (a[0] - c[0])
+          + (c[0] - b[0]) * (a[1] - c[1]);
+        if (Math.abs(denominator) <= 1e-9) continue;
+        const wa = (
+          (b[1] - c[1]) * (point[0] - c[0])
+          + (c[0] - b[0]) * (point[1] - c[1])
+        ) / denominator;
+        const wb = (
+          (c[1] - a[1]) * (point[0] - c[0])
+          + (a[0] - c[0]) * (point[1] - c[1])
+        ) / denominator;
+        return { vertexIndices: indices, weights: [wa, wb, 1 - wa - wb] };
+      }
+    }
+  }
+  const fallback = loop[0] ?? 0;
+  return {
+    vertexIndices: [fallback, fallback, fallback],
+    weights: [1, 0, 0],
+  };
+}
+
+function weightedV3(
+  positions: V3[],
+  vertexIndices: [number, number, number],
+  weights: [number, number, number],
+): V3 {
+  const a = positions[vertexIndices[0]];
+  const b = positions[vertexIndices[1]];
+  const c = positions[vertexIndices[2]];
+  return [
+    a[0] * weights[0] + b[0] * weights[1] + c[0] * weights[2],
+    a[1] * weights[0] + b[1] * weights[1] + c[1] * weights[2],
+    a[2] * weights[0] + b[2] * weights[1] + c[2] * weights[2],
+  ];
+}
+
 const SCENE_EXTENT = 3; // post-normalization target span (foldSceneFrame scales to this)
 // The live renderer displays the nominal board thickness with a narrower shell
 // than a literal FOLD-unit extrusion. Keep the authored value unchanged in the
@@ -42,8 +116,11 @@ export const SOURCE_THICKNESS_DISPLAY_SCALE = 0.6;
 const CREASE_LINE_SURFACE_OFFSET = 0.006; // line epsilon above the front slab surface
 const LOCKED_TINT_OFFSET = 0.004; // tint sits under the lines, above the face
 const SELECTED_TINT_OFFSET = 0.005;
+const LOCKED_ICON_OFFSET = 0.012;
 const EDGE_UV_REPEAT_PER_SCENE_UNIT = 4.5;
 const MAX_HINGE_MITER_RATIO = 2.5;
+const CURVED_EDGE_SEGMENTS = 12;
+const CLOSED_VERTICAL_SEAM_PAIR_DISTANCE = 0.19;
 
 export type FoldProjection = "flat-2d" | "folded-3d";
 
@@ -82,6 +159,13 @@ type FoldVertexPositionRecipe =
       normalOffset: number;
     }
   | {
+      kind: "facePoint";
+      vertexIndices: [number, number, number];
+      weights: [number, number, number];
+      faceIndex: number;
+      normalOffset: number;
+    }
+  | {
       kind: "miter";
       vertexIndex: number;
       faceAIndex: number;
@@ -95,6 +179,7 @@ type FoldEdgePositionLayout = {
   frontAIndices: number[];
   frontBIndices: number[];
   pickPositionOffset: number;
+  selectedPositionOffset: number;
   solidPositionOffset?: number;
   creasePositionOffset?: number;
   dashedPositionOffset?: number;
@@ -107,6 +192,7 @@ type FoldScenePositionLayout = {
   frame: ReturnType<typeof foldSceneFrame>;
   meshRecipes: FoldVertexPositionRecipe[];
   lockedTintRecipes: FoldVertexPositionRecipe[];
+  lockedIconRecipes: FoldVertexPositionRecipe[];
   selectedTintRecipes: FoldVertexPositionRecipe[];
   edgeLayouts: FoldEdgePositionLayout[];
 };
@@ -118,6 +204,9 @@ export type FoldSceneMeta = {
   interiorFoldHingeCount: number;
   foldHingeSidebandIndexCount: number;
   foldHingeCapIndexCount: number;
+  /** Double-wall terminal corners closed by one continuous cut-face cap. */
+  closedSeamEdgeCount: number;
+  closedSeamCapIndexCount: number;
   thicknessOffsetDirection: ThicknessOffsetDirection;
   creaseLineCount: number;
   lockedFaceCount: number;
@@ -133,6 +222,8 @@ export type FoldSceneData = {
   faceIndexByTriangle: Int32Array;
   /** translucent overlay of the locked faces' front triangles (null if none). */
   lockedTintGeometry: BufferGeometry | null;
+  /** one screen-sized lock marker anchor per fixed panel. */
+  lockedIconGeometry: BufferGeometry | null;
   selectedTintGeometry: BufferGeometry | null;
   /** cut boundaries, solid; LineSegments + vertex colors. */
   solidEdgeGeometry: BufferGeometry;
@@ -293,6 +384,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   const backIndices: number[] = [];
   const backHingeIndices: number[] = [];
   const edgeIndices: number[] = [];
+  const closedSeamCapIndices: number[] = [];
   let next = 0;
   const white = new Color("#ffffff");
   const faceColors = model.facesVertices.map((_, index) => new Color(panelColorForIndex(index)));
@@ -316,6 +408,31 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   const uvOf = (vi: number): [number, number] => {
     const t = model.verticesUv[vi];
     return t ? [t[0], t[1]] : [0, 0];
+  };
+  const facePoint = (
+    faceIndex: number,
+    flatPoint: readonly [number, number],
+    normalOffset: number,
+  ): { position: V3; uv: [number, number]; recipe: FoldVertexPositionRecipe } => {
+    const { vertexIndices, weights } = facePointWeights(model, faceIndex, flatPoint);
+    const position = weightedV3(scenePositions, vertexIndices, weights);
+    const uvA = uvOf(vertexIndices[0]);
+    const uvB = uvOf(vertexIndices[1]);
+    const uvC = uvOf(vertexIndices[2]);
+    return {
+      position,
+      uv: [
+        uvA[0] * weights[0] + uvB[0] * weights[1] + uvC[0] * weights[2],
+        uvA[1] * weights[0] + uvB[1] * weights[1] + uvC[1] * weights[2],
+      ],
+      recipe: {
+        kind: "facePoint",
+        vertexIndices,
+        weights,
+        faceIndex,
+        normalOffset,
+      },
+    };
   };
   const faceNormal = (loop: number[]): V3 => {
     let nx = 0, ny = 0, nz = 0;
@@ -384,6 +501,74 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     }
   }
 
+  // PackCAD keeps Bézier control-point indices after each edge's two endpoint
+  // indices. The fold solver correctly works on the endpoint topology, but the
+  // visible shell must restore those curves or rounded lid ears become angular
+  // chords. Add a rigid, face-owned curve patch outside the solver mesh and use
+  // it for the printed face, cut outline, and corrugated sideband.
+  type CurvedEdgeRender = {
+    faceIndex: number;
+    frontIndices: number[];
+    backIndices: number[];
+  };
+  const curvedEdgeRender = new Map<number, CurvedEdgeRender>();
+  const curvedPatchFaceIndices: number[] = [];
+  model.edgeControlPoints?.forEach((controls, edgeIndex) => {
+    if (controls.length === 0) return;
+    const adjacentFaces = model.edgeFaces[edgeIndex] ?? [];
+    if (adjacentFaces.length !== 1) return;
+    const faceIndex = adjacentFaces[0];
+    const face = faceData[faceIndex];
+    const [va, vb] = model.edgesVertices[edgeIndex];
+    const start = model.verticesCoords[va];
+    const end = model.verticesCoords[vb];
+    const flatPoints: Array<[number, number]> = [];
+    for (let segment = 0; segment <= CURVED_EDGE_SEGMENTS; segment += 1) {
+      flatPoints.push(bezierPoint(start, controls, end, segment / CURVED_EDGE_SEGMENTS));
+    }
+    const frontCurve: number[] = [];
+    const backCurve: number[] = [];
+    const faceColor = panelColorMode === "multicolor" ? faceColors[faceIndex] : white;
+    flatPoints.forEach((flatPoint, index) => {
+      if (index === 0) {
+        frontCurve.push(face.front.get(va)!);
+        backCurve.push(face.back.get(va)!);
+        return;
+      }
+      if (index === flatPoints.length - 1) {
+        frontCurve.push(face.front.get(vb)!);
+        backCurve.push(face.back.get(vb)!);
+        return;
+      }
+      const frontPoint = facePoint(faceIndex, flatPoint, fOff);
+      const backPoint = facePoint(faceIndex, flatPoint, bOff);
+      frontCurve.push(pushVert(
+        v3add(frontPoint.position, v3scale(face.nrm, fOff)),
+        frontPoint.uv,
+        frontPoint.recipe,
+        faceColor,
+      ));
+      backCurve.push(pushVert(
+        v3add(backPoint.position, v3scale(face.nrm, bOff)),
+        backPoint.uv,
+        backPoint.recipe,
+        faceColor,
+      ));
+    });
+    const localLoop = flatPoints.map((_point, index) => index);
+    const patchTriangles = triangulateFace(localLoop, flatPoints);
+    for (const [a, b, c] of patchTriangles) {
+      frontIndices.push(frontCurve[a], frontCurve[b], frontCurve[c]);
+      backIndices.push(backCurve[a], backCurve[b], backCurve[c]);
+      curvedPatchFaceIndices.push(faceIndex);
+    }
+    curvedEdgeRender.set(edgeIndex, {
+      faceIndex,
+      frontIndices: frontCurve,
+      backIndices: backCurve,
+    });
+  });
+
   // Close exposed cut edges with the sideband texture (skipped when flat/no thickness).
   const edgeVertexStart = next;
   let interiorFoldHingeCount = 0;
@@ -403,6 +588,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     cVa: DynamicPoint,
     v0 = 0,
     v1 = 1,
+    targetIndices = edgeIndices,
   ) => {
     const u1 = Math.max(
       1,
@@ -412,7 +598,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     const b = pushVert(pVb.position, [u1, v0], pVb.recipe);
     const c = pushVert(cVb.position, [u1, v1], cVb.recipe);
     const d = pushVert(cVa.position, [0, v1], cVa.recipe);
-    edgeIndices.push(a, b, c, a, c, d);
+    targetIndices.push(a, b, c, a, c, d);
   };
   const addHingeQuad = (
     target: number[],
@@ -544,6 +730,69 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       edgeIndices.push(capVertices[0], capVertices[index], capVertices[index + 1]);
     }
   };
+  const replacedClosedSeamSidebandEdges = new Set<number>();
+  if (showThickness && projection === "folded-3d") {
+    const maximumCreaseIncidence = new Map<number, number>();
+    for (let keyframeIndex = 0; keyframeIndex < Math.min(foldStepIndex, model.keyframes.length); keyframeIndex += 1) {
+      const incidence = new Map<number, number>();
+      for (const edgeKey of Object.keys(model.keyframes[keyframeIndex].creaseAnglesDeg)) {
+        for (const faceIndex of model.edgeFaces[Number(edgeKey)] ?? []) {
+          incidence.set(faceIndex, (incidence.get(faceIndex) ?? 0) + 1);
+        }
+      }
+      for (const [faceIndex, count] of incidence) {
+        maximumCreaseIncidence.set(
+          faceIndex,
+          Math.max(maximumCreaseIncidence.get(faceIndex) ?? 0, count),
+        );
+      }
+    }
+    const candidates = model.edgesVertices.flatMap(([va, vb], edgeIndex) => {
+      const faces = model.edgeFaces[edgeIndex] ?? [];
+      if (faces.length !== 1 || model.edgeControlPoints?.[edgeIndex]?.length) return [];
+      const face = faceData[faces[0]];
+      const a = dynamicPointAt(face.front.get(va)!);
+      const b = dynamicPointAt(face.front.get(vb)!);
+      const delta = v3sub(b.position, a.position);
+      const length = v3len(delta);
+      if (length <= 1e-6 || Math.abs(delta[1]) / length < 0.8) return [];
+      return [{ edgeIndex, faceIndex: faces[0], a, b, length }];
+    });
+    for (let firstIndex = 0; firstIndex < candidates.length; firstIndex += 1) {
+      const first = candidates[firstIndex];
+      for (let secondIndex = firstIndex + 1; secondIndex < candidates.length; secondIndex += 1) {
+        const second = candidates[secondIndex];
+        if (first.faceIndex === second.faceIndex) continue;
+        if (Math.abs(first.length - second.length) > Math.max(first.length, second.length) * 0.2) continue;
+        const sameDirection = v3len(v3sub(first.a.position, second.a.position))
+          + v3len(v3sub(first.b.position, second.b.position));
+        const reverseDirection = v3len(v3sub(first.a.position, second.b.position))
+          + v3len(v3sub(first.b.position, second.a.position));
+        if (Math.min(sameDirection, reverseDirection) > CLOSED_VERTICAL_SEAM_PAIR_DISTANCE) continue;
+        const firstIncidence = maximumCreaseIncidence.get(first.faceIndex) ?? 0;
+        const secondIncidence = maximumCreaseIncidence.get(second.faceIndex) ?? 0;
+        if (firstIncidence === secondIncidence || Math.max(firstIncidence, secondIncidence) < 2) continue;
+        // The two walls form a double-wall rail. At its terminal corner the
+        // source closes the entire rail with one kraft cut face; rendering each
+        // board edge independently leaves a red slot between two tan ribbons.
+        // Replace both individual sidebands with one bridge cap, retaining the
+        // boundary outlines around that single continuous cut surface.
+        replacedClosedSeamSidebandEdges.add(first.edgeIndex);
+        replacedClosedSeamSidebandEdges.add(second.edgeIndex);
+        const secondA = sameDirection <= reverseDirection ? second.a : second.b;
+        const secondB = sameDirection <= reverseDirection ? second.b : second.a;
+        addEdgeQuad(
+          first.a,
+          first.b,
+          secondB,
+          secondA,
+          0,
+          1,
+          closedSeamCapIndices,
+        );
+      }
+    }
+  }
   if (showThickness) {
     const boundaryVertices = new Set<number>();
     for (let edgeIndex = 0; edgeIndex < model.edgesVertices.length; edgeIndex += 1) {
@@ -555,7 +804,20 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     model.edgesVertices.forEach(([va, vb], ei) => {
       const fcs = model.edgeFaces[ei];
       if (fcs.length === 1) {
+        if (replacedClosedSeamSidebandEdges.has(ei)) return;
         const A = faceData[fcs[0]];
+        const curved = curvedEdgeRender.get(ei);
+        if (curved) {
+          for (let segment = 0; segment + 1 < curved.frontIndices.length; segment += 1) {
+            addEdgeQuad(
+              dynamicPointAt(curved.frontIndices[segment]),
+              dynamicPointAt(curved.frontIndices[segment + 1]),
+              dynamicPointAt(curved.backIndices[segment + 1]),
+              dynamicPointAt(curved.backIndices[segment]),
+            );
+          }
+          return;
+        }
         const fa = A.front.get(va)!, fb = A.front.get(vb)!, ba = A.back.get(va)!, bb = A.back.get(vb)!;
         addEdgeQuad(
           dynamicPointAt(fa),
@@ -570,10 +832,10 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         const B = faceData[fcs[1]];
         const outward = v3norm(v3add(A.nrm, B.nrm));
         const hingeOutward = v3len(outward) > 1e-6 ? outward : A.nrm;
-        // PackCAD's GraphVisBendRadius closes the front and back thickness
-        // shells independently with the corresponding face material. A flat
-        // bridge is sufficient at our current mesh resolution and, unlike a
-        // corrugated sideband, does not expose a false cut edge at the crease.
+        // PackCAD's bend-radius bridge reads as a warm compressed-board seam,
+        // not an unprinted white face. We still build the front/back bridge
+        // independently, but group both narrow strips with the edge material
+        // below so artwork transparency cannot turn a folded hinge white.
         addMiteredHingeStrip(
           frontHingeIndices,
           va,
@@ -635,10 +897,12 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   const lift = CREASE_LINE_SURFACE_OFFSET;
   let creaseLineCount = 0;
 
-  // ONE clean line per edge: average the adjacent faces' front-edge positions and
-  // normals so a crease sits on the ridge instead of drawing a doubled line.
-  model.edgesVertices.forEach(([va, vb], ei) => {
-    const fcs = model.edgeFaces[ei];
+  const addRenderedEdgeSegment = (
+    ei: number,
+    fcs: number[],
+    frontAIndices: number[],
+    frontBIndices: number[],
+  ) => {
     if (fcs.length === 0) return;
     const style = resolveEdgeStyle(
       model,
@@ -653,10 +917,11 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
 
     let ax = 0, ay = 0, az = 0, bx = 0, by = 0, bz = 0;
     let nx = 0, ny = 0, nz = 0, count = 0;
-    for (const faceIndex of fcs) {
+    for (let faceOffset = 0; faceOffset < fcs.length; faceOffset += 1) {
+      const faceIndex = fcs[faceOffset];
       const face = faceData[faceIndex];
-      const aIndex = face.front.get(va);
-      const bIndex = face.front.get(vb);
+      const aIndex = frontAIndices[faceOffset];
+      const bIndex = frontBIndices[faceOffset];
       if (aIndex === undefined || bIndex === undefined) continue;
       const pa = positionAt(aIndex);
       const pb = positionAt(bIndex);
@@ -670,20 +935,19 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     const A = v3add([ax / count, ay / count, az / count] as V3, lifted);
     const B = v3add([bx / count, by / count, bz / count] as V3, lifted);
 
+    const selectedEdgePositions = positionsByEdge.get(ei) ?? [];
     const edgeLayout: FoldEdgePositionLayout = {
       edgeIndex: ei,
       faceIndices: [...fcs],
-      frontAIndices: fcs
-        .map((faceIndex) => faceData[faceIndex].front.get(va))
-        .filter((index): index is number => index !== undefined),
-      frontBIndices: fcs
-        .map((faceIndex) => faceData[faceIndex].front.get(vb))
-        .filter((index): index is number => index !== undefined),
+      frontAIndices,
+      frontBIndices,
       pickPositionOffset: pickPos.length,
+      selectedPositionOffset: selectedEdgePositions.length,
     };
     pickPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
     segmentEdgeIndex.push(ei);
-    positionsByEdge.set(ei, [A[0], A[1], A[2], B[0], B[1], B[2]]);
+    selectedEdgePositions.push(A[0], A[1], A[2], B[0], B[1], B[2]);
+    positionsByEdge.set(ei, selectedEdgePositions);
     edgeLayouts.push(edgeLayout);
 
     if (!c) return;
@@ -706,6 +970,36 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       creaseCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
       creaseLineCount += 1;
     }
+  };
+
+  // ONE clean line per edge: average the adjacent faces' front-edge positions and
+  // normals so a crease sits on the ridge instead of drawing a doubled line.
+  // Curved cuts contribute one pick/render segment per sampled Bézier span.
+  model.edgesVertices.forEach(([va, vb], ei) => {
+    const fcs = model.edgeFaces[ei];
+    if (fcs.length === 0) return;
+    const curved = curvedEdgeRender.get(ei);
+    if (curved) {
+      for (let segment = 0; segment + 1 < curved.frontIndices.length; segment += 1) {
+        addRenderedEdgeSegment(
+          ei,
+          [curved.faceIndex],
+          [curved.frontIndices[segment]],
+          [curved.frontIndices[segment + 1]],
+        );
+      }
+      return;
+    }
+    addRenderedEdgeSegment(
+      ei,
+      fcs,
+      fcs
+        .map((faceIndex) => faceData[faceIndex].front.get(va))
+        .filter((index): index is number => index !== undefined),
+      fcs
+        .map((faceIndex) => faceData[faceIndex].front.get(vb))
+        .filter((index): index is number => index !== undefined),
+    );
   });
 
   // --- locked / selected face tint overlays ---------------------------------
@@ -747,6 +1041,57 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     (fi) => lockedFaces.has(fi) && fi !== selectedFaceIndex,
     LOCKED_TINT_OFFSET,
   );
+  const lockedIconPositions: number[] = [];
+  const lockedIconRecipes: FoldVertexPositionRecipe[] = [];
+  // A lock is an anchor, not a crease-participation badge. Keep markers on the
+  // same fixed panels used by the operation solver so the UI never claims that
+  // a moving terminal flap is locked.
+  const lockedIconFaces = lockedFaces;
+  for (const faceIndex of lockedIconFaces) {
+    const face = faceData[faceIndex];
+    if (!face || face.tris.length === 0) continue;
+    let totalArea = 0;
+    const flatCenter: [number, number] = [0, 0];
+    for (const triangle of face.tris) {
+      const [a, b, c] = triangle.map((index) => model.verticesCoords[index]);
+      const area = Math.abs(
+        (b[0] - a[0]) * (c[1] - a[1])
+        - (b[1] - a[1]) * (c[0] - a[0]),
+      );
+      flatCenter[0] += ((a[0] + b[0] + c[0]) / 3) * area;
+      flatCenter[1] += ((a[1] + b[1] + c[1]) / 3) * area;
+      totalArea += area;
+    }
+    if (totalArea <= 1e-9) continue;
+    flatCenter[0] /= totalArea;
+    flatCenter[1] /= totalArea;
+    const { vertexIndices, weights } = facePointWeights(model, faceIndex, flatCenter);
+    // Emit an anchor just beyond each board surface. Depth testing selects the
+    // one facing the camera and prevents icons on hidden panels showing through.
+    for (const normalOffset of [
+      fOff + LOCKED_ICON_OFFSET,
+      bOff - LOCKED_ICON_OFFSET,
+    ]) {
+      const anchor = v3add(
+        weightedV3(scenePositions, vertexIndices, weights),
+        v3scale(face.nrm, normalOffset),
+      );
+      lockedIconPositions.push(anchor[0], anchor[1] - minY, anchor[2]);
+      lockedIconRecipes.push({
+        kind: "facePoint",
+        vertexIndices,
+        weights,
+        faceIndex,
+        normalOffset,
+      });
+    }
+  }
+  const lockedIconGeometry = lockedIconPositions.length > 0
+    ? new BufferGeometry().setAttribute(
+        "position",
+        new Float32BufferAttribute(lockedIconPositions, 3),
+      )
+    : null;
   const selectedTint =
     selectedFaceIndex === null || selectedFaceIndex === undefined
       ? { geometry: null, recipes: [] }
@@ -755,10 +1100,11 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // --- assemble face geometry -----------------------------------------------
   const indices = [
     ...frontIndices,
-    ...frontHingeIndices,
     ...backIndices,
+    ...frontHingeIndices,
     ...backHingeIndices,
     ...edgeIndices,
+    ...closedSeamCapIndices,
   ];
   // Triangle id -> source face index. Bend/cut closure geometry is not a
   // selectable panel, so those triangles deliberately map to -1.
@@ -766,23 +1112,34 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   for (const [faceIndex, face] of faceData.entries()) {
     for (let index = 0; index < face.tris.length; index += 1) faceIndexByTriangle.push(faceIndex);
   }
-  faceIndexByTriangle.push(...Array(frontHingeIndices.length / 3).fill(-1));
+  faceIndexByTriangle.push(...curvedPatchFaceIndices);
   for (const [faceIndex, face] of faceData.entries()) {
     for (let index = 0; index < face.tris.length; index += 1) faceIndexByTriangle.push(faceIndex);
   }
+  faceIndexByTriangle.push(...curvedPatchFaceIndices);
+  faceIndexByTriangle.push(...Array(frontHingeIndices.length / 3).fill(-1));
   faceIndexByTriangle.push(...Array(backHingeIndices.length / 3).fill(-1));
   faceIndexByTriangle.push(...Array(edgeIndices.length / 3).fill(-1));
+  faceIndexByTriangle.push(...Array(closedSeamCapIndices.length / 3).fill(-1));
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
   geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   geometry.clearGroups();
-  const frontGroupCount = frontIndices.length + frontHingeIndices.length;
-  const backGroupCount = backIndices.length + backHingeIndices.length;
+  const frontGroupCount = frontIndices.length;
+  const backGroupCount = backIndices.length;
+  const edgeGroupCount = frontHingeIndices.length + backHingeIndices.length + edgeIndices.length;
   geometry.addGroup(0, frontGroupCount, 0);
   geometry.addGroup(frontGroupCount, backGroupCount, 1);
-  geometry.addGroup(frontGroupCount + backGroupCount, edgeIndices.length, 2);
+  geometry.addGroup(frontGroupCount + backGroupCount, edgeGroupCount, 2);
+  if (closedSeamCapIndices.length > 0) {
+    geometry.addGroup(
+      frontGroupCount + backGroupCount + edgeGroupCount,
+      closedSeamCapIndices.length,
+      3,
+    );
+  }
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   const box = geometry.boundingBox!;
@@ -811,6 +1168,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     geometry,
     faceIndexByTriangle: Int32Array.from(faceIndexByTriangle),
     lockedTintGeometry: lockedTint.geometry,
+    lockedIconGeometry,
     selectedTintGeometry: selectedTint.geometry,
     solidEdgeGeometry,
     creaseEdgeGeometry,
@@ -824,12 +1182,14 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     bounds,
     frameScale: frame.scale,
     meta: {
-      edgeIndexCount: edgeIndices.length,
-      cutEdgeIndexCount: edgeIndices.length,
+      edgeIndexCount: edgeIndices.length + closedSeamCapIndices.length,
+      cutEdgeIndexCount: edgeIndices.length + closedSeamCapIndices.length,
       edgeVertexCount: next - edgeVertexStart,
       interiorFoldHingeCount,
       foldHingeSidebandIndexCount: frontHingeIndices.length + backHingeIndices.length,
       foldHingeCapIndexCount,
+      closedSeamEdgeCount: replacedClosedSeamSidebandEdges.size / 2,
+      closedSeamCapIndexCount: closedSeamCapIndices.length,
       thicknessOffsetDirection: direction,
       creaseLineCount,
       lockedFaceCount: lockedFaces.size,
@@ -842,6 +1202,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       frame,
       meshRecipes,
       lockedTintRecipes: lockedTint.recipes,
+      lockedIconRecipes,
       selectedTintRecipes: selectedTint.recipes,
       edgeLayouts,
     },
@@ -855,9 +1216,11 @@ function writeRecipePosition(
   scenePositions: V3[],
   faceNormals: V3[],
 ): void {
-  const base = scenePositions[recipe.vertexIndex];
+  const base = recipe.kind === "facePoint"
+    ? weightedV3(scenePositions, recipe.vertexIndices, recipe.weights)
+    : scenePositions[recipe.vertexIndex];
   let normal: V3;
-  if (recipe.kind === "face") {
+  if (recipe.kind === "face" || recipe.kind === "facePoint") {
     normal = faceNormals[recipe.faceIndex];
   } else {
     const normalA = faceNormals[recipe.faceAIndex];
@@ -884,6 +1247,7 @@ function updateRecipeGeometry(
   scenePositions: V3[],
   faceNormals: V3[],
   groundOffset: number,
+  computeNormals = true,
 ): void {
   if (!geometry) return;
   const attribute = geometry.getAttribute("position");
@@ -900,7 +1264,7 @@ function updateRecipeGeometry(
     positions[offset + 1] -= groundOffset;
   }
   attribute.needsUpdate = true;
-  geometry.computeVertexNormals();
+  if (computeNormals) geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
 }
@@ -1004,6 +1368,14 @@ export function updateFoldScenePositions(
     groundOffset,
   );
   updateRecipeGeometry(
+    data.lockedIconGeometry,
+    data.positionLayout.lockedIconRecipes,
+    scenePositions,
+    faceNormals,
+    groundOffset,
+    false,
+  );
+  updateRecipeGeometry(
     data.selectedTintGeometry,
     data.positionLayout.selectedTintRecipes,
     scenePositions,
@@ -1050,7 +1422,9 @@ export function updateFoldScenePositions(
     b[2] = b[2] / count + lifted[2];
     writeLineSegment(pickPositions, edge.pickPositionOffset, a, b);
     const edgePositions = data.positionsByEdge.get(edge.edgeIndex);
-    if (edgePositions) writeLineSegment(edgePositions, 0, a, b);
+    if (edgePositions) {
+      writeLineSegment(edgePositions, edge.selectedPositionOffset, a, b);
+    }
     if (edge.solidPositionOffset !== undefined) {
       writeLineSegment(solidPositions, edge.solidPositionOffset, a, b);
     }

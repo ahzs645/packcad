@@ -17,6 +17,7 @@ describe("live MailerBox source parity", () => {
 
     expect(model.verticesCoords).toHaveLength(74);
     expect(model.facesVertices).toHaveLength(19);
+    expect(model.edgeControlPoints?.filter((points) => points.length > 0)).toHaveLength(8);
     expect(model.keyframes.map((keyframe) =>
       Object.keys(keyframe.creaseAnglesDeg).length)).toEqual([4, 2, 4, 4, 4]);
     expect(model.keyframes.map((keyframe) =>
@@ -25,7 +26,7 @@ describe("live MailerBox source parity", () => {
       keyframe.fixedFaceIndices.includes(model.fixedFaceIndex))).toBe(true);
   });
 
-  it("folds the K4 side returns outward and keeps the K5 lid upright", () => {
+  it("folds the K4 side returns into the walls and keeps the K5 lid upright", () => {
     const model = createMailerBoxProject().foldModel;
     if (!model) throw new Error("MailerBox fixture did not produce a fold model");
     const solved = foldNewtonSequence(model);
@@ -36,13 +37,13 @@ describe("live MailerBox source parity", () => {
       return [Math.min(...values), Math.max(...values)];
     };
 
-    expect(model.keyframes[3].creaseBranchSigns).toEqual({ 0: -1, 11: -1 });
+    expect(model.keyframes[3].creaseBranchSigns).toEqual({ 0: 1, 11: 1 });
     const [rightReturnMinX] = range(6, 0);
     const [, rightWallMaxX] = range(7, 0);
-    expect(rightReturnMinX).toBeGreaterThanOrEqual(rightWallMaxX - 1e-3);
+    expect(rightReturnMinX).toBeLessThan(rightWallMaxX - 1);
     const [, leftReturnMaxX] = range(15, 0);
     const [leftWallMinX] = range(16, 0);
-    expect(leftReturnMaxX).toBeLessThanOrEqual(leftWallMinX + 1e-3);
+    expect(leftReturnMaxX).toBeGreaterThan(leftWallMinX + 1);
 
     const [lidMinY, lidMaxY] = range(2, 1);
     const [lidMinZ, lidMaxZ] = range(2, 2);

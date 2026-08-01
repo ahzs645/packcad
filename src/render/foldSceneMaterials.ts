@@ -12,6 +12,7 @@ export type FoldSceneMaterials = [
   front: MeshStandardMaterial,
   back: MeshStandardMaterial,
   edge: MeshStandardMaterial,
+  closedSeamCap: MeshStandardMaterial,
 ];
 
 export type FoldSceneMaterialLayers = {
@@ -62,8 +63,32 @@ export function createFoldSceneMaterials({
   if (!technical) {
     baseBackMaterial.side = viewMode === "2d" ? DoubleSide : BackSide;
   }
+  const cutEdgeColor = new Color(technical ? "#f1f1f1" : edgeFallbackColor);
+  if (!technical && edgeTexture) {
+    // The flute bitmap supplies the corrugation detail, while this warm, dark
+    // stock tint supplies the colour. A pale multiplier left a conspicuous
+    // beige ribbon above every red sidewall; the source renders those grazing
+    // cut edges as a narrow brown/red seam.
+    cutEdgeColor.lerp(new Color("#6e3428"), 0.72);
+  }
   const baseEdgeMaterial = new MeshStandardMaterial({
-    color: technical ? "#f1f1f1" : edgeTexture ? "#ffffff" : edgeFallbackColor,
+    // Tint the flute texture with the stock colour. Leaving textured edges
+    // pure white made exposed folds read as bright plastic bands, especially
+    // along the K4/K5 side walls, instead of the source's kraft cut surface.
+    color: cutEdgeColor,
+    map: technical ? null : edgeTexture,
+    roughness: technical ? 0.96 : 1,
+    metalness: 0,
+    wireframe: technical,
+    side: DoubleSide,
+  });
+  const closedSeamCapMaterial = new MeshStandardMaterial({
+    // A double-wall terminal is a broad exposed cross-section, unlike the
+    // grazing cut/crease strips above. Keep the flute detail but use natural
+    // kraft stock so the cap does not turn into a nearly black corner block.
+    color: new Color(
+      technical ? "#f1f1f1" : edgeTexture ? "#ffffff" : edgeFallbackColor,
+    ),
     map: technical ? null : edgeTexture,
     roughness: technical ? 0.96 : 1,
     metalness: 0,
@@ -75,6 +100,7 @@ export function createFoldSceneMaterials({
     baseFrontMaterial,
     baseBackMaterial,
     baseEdgeMaterial,
+    closedSeamCapMaterial,
   ];
   if (technical || !showArtwork || !frontArtworkTexture) {
     return { base, artwork: null };
@@ -107,6 +133,7 @@ export function createFoldSceneMaterials({
   const artwork: FoldSceneMaterials = [
     artworkFrontMaterial,
     artworkBackMaterial,
+    hiddenArtworkEdgeMaterial,
     hiddenArtworkEdgeMaterial,
   ];
 

@@ -65,6 +65,21 @@ function formatThickness(
     : `${(thicknessMm / 25.4).toFixed(4)} in`;
 }
 
+export function foldCompletionPercent(
+  currentAngle: number,
+  targetAngles: Iterable<number>,
+): number {
+  // Playback exposes the average measured angle of the operation's active
+  // creases. Compare it with the average authored magnitude as well; using the
+  // largest target makes mixed folds (milk K5: 120° + 45°) stop below 100%.
+  const authored = Array.from(targetAngles, (angle) => Math.abs(angle));
+  const target = authored.length === 0
+    ? 0
+    : authored.reduce((sum, angle) => sum + angle, 0) / authored.length;
+  if (target <= 0) return 0;
+  return Math.round(Math.max(0, Math.min(1, Math.abs(currentAngle) / target)) * 100);
+}
+
 export function Inspector({
   open,
   project,
@@ -124,7 +139,10 @@ export function Inspector({
     ? new Map(foldStatus.summary.keyframes.map((item) => [item.id, item]))
     : new Map<string, { status: "Solved" | "Non-Rigid" }>();
   const selectedMaterial = materials[project.material];
-  const completion = Math.round(((activeStep?.angle ?? 0) / 110) * 100);
+  const completion = foldCompletionPercent(
+    activeStep?.angle ?? 0,
+    Object.values(activeKeyframe?.creaseAnglesDeg ?? {}),
+  );
 
   return (
     <aside className={open ? "inspector open" : "inspector"}>

@@ -2,6 +2,7 @@ import {
   AxesHelper,
   Box3,
   BufferGeometry,
+  CanvasTexture,
   ClampToEdgeWrapping,
   DoubleSide,
   Float32BufferAttribute,
@@ -14,6 +15,8 @@ import {
   Mesh,
   MeshBasicMaterial,
   NoToneMapping,
+  Points,
+  PointsMaterial,
   RepeatWrapping,
   SRGBColorSpace,
   TextureLoader,
@@ -104,11 +107,41 @@ interface ViewportPaneProps {
 function disposeSceneData(data: FoldSceneData): void {
   data.geometry.dispose();
   data.lockedTintGeometry?.dispose();
+  data.lockedIconGeometry?.dispose();
   data.selectedTintGeometry?.dispose();
   data.solidEdgeGeometry.dispose();
   data.creaseEdgeGeometry.dispose();
   data.dashedEdgeGeometry.dispose();
   data.edgePickGeometry.dispose();
+}
+
+function createLockedPanelTexture(): CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  if (!context) return new CanvasTexture(canvas);
+  context.clearRect(0, 0, 64, 64);
+  context.strokeStyle = "#173f73";
+  context.fillStyle = "rgba(23,63,115,0.12)";
+  context.lineWidth = 6;
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.beginPath();
+  context.arc(32, 26, 13, Math.PI, 0);
+  context.stroke();
+  context.beginPath();
+  context.roundRect(14, 26, 36, 28, 5);
+  context.fill();
+  context.stroke();
+  context.beginPath();
+  context.moveTo(32, 36);
+  context.lineTo(32, 44);
+  context.stroke();
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 function configureArtworkTexture(texture: Texture): Texture {
@@ -307,8 +340,6 @@ export function ViewportPane({
   const creaseEdgesRef = useRef<FatEdges | null>(null);
   const dashedEdgesRef = useRef<FatEdges | null>(null);
   const occludedSolidEdgesRef = useRef<FatEdges | null>(null);
-  const occludedCreaseEdgesRef = useRef<FatEdges | null>(null);
-  const occludedDashedEdgesRef = useRef<FatEdges | null>(null);
   const autoFitRef = useRef<{
     model: PackagingProject["foldModel"];
     viewMode: PackagingProject["viewMode"];
@@ -589,14 +620,6 @@ export function ViewportPane({
       occludedSolidEdgesRef.current,
       data.solidEdgeGeometry,
     );
-    updateFatEdgePositions(
-      occludedCreaseEdgesRef.current,
-      data.creaseEdgeGeometry,
-    );
-    updateFatEdgePositions(
-      occludedDashedEdgesRef.current,
-      data.dashedEdgeGeometry,
-    );
     updateFatEdgePositionArray(
       selectedLineRef.current,
       selectedFoldEdgeIndexRef.current === null
@@ -750,28 +773,12 @@ export function ViewportPane({
       linewidth: creaseLineWidth,
       depthTest: viewMode !== "2d",
     });
-    const occludedSolidEdges = viewMode === "3d"
+    // X-ray only true cut boundaries. Replaying hidden crease geometry through
+    // a fully folded panel creates ghost diagonals and doubled seams that move
+    // with perspective, even though those creases are internal construction.
+    const occludedSolidEdges = viewMode === "3d" && project.renderMode === "technical"
       ? createFatEdges(data.solidEdgeGeometry, viewport, {
           linewidth: Math.min(cutLineWidth, 1),
-          depthTest: true,
-          depthFunc: GreaterDepth,
-          opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
-          renderOrder: 2,
-        })
-      : null;
-    const occludedCreaseEdges = viewMode === "3d"
-      ? createFatEdges(data.creaseEdgeGeometry, viewport, {
-          linewidth: Math.min(creaseLineWidth, 0.9),
-          depthTest: true,
-          depthFunc: GreaterDepth,
-          opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
-          renderOrder: 2,
-        })
-      : null;
-    const occludedDashedEdges = viewMode === "3d"
-      ? createFatEdges(data.dashedEdgeGeometry, viewport, {
-          dashed: true,
-          linewidth: Math.min(creaseLineWidth, 0.9),
           depthTest: true,
           depthFunc: GreaterDepth,
           opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
@@ -782,8 +789,6 @@ export function ViewportPane({
     creaseEdgesRef.current = creaseEdges;
     dashedEdgesRef.current = dashedEdges;
     occludedSolidEdgesRef.current = occludedSolidEdges;
-    occludedCreaseEdgesRef.current = occludedCreaseEdges;
-    occludedDashedEdgesRef.current = occludedDashedEdges;
     const updateDashScale = (): void => {
       if (viewMode !== "2d") return;
       const zoom = viewport.camera.getState().zoom;
@@ -848,10 +853,25 @@ export function ViewportPane({
     const lockedTintMesh = LOCKED_FACE_TINT_OPACITY > 0 && data.lockedTintGeometry
       ? new Mesh(data.lockedTintGeometry, lockedTintMaterial)
       : null;
+    const lockedIconTexture = createLockedPanelTexture();
+    const lockedIconMaterial = new PointsMaterial({
+      map: lockedIconTexture,
+      color: "#ffffff",
+      transparent: true,
+      alphaTest: 0.08,
+      depthWrite: false,
+      depthTest: true,
+      size: 18,
+      sizeAttenuation: false,
+    });
+    const lockedIconPoints = viewMode === "3d" && data.lockedIconGeometry
+      ? new Points(data.lockedIconGeometry, lockedIconMaterial)
+      : null;
     const selectedTintMesh = data.selectedTintGeometry
       ? new Mesh(data.selectedTintGeometry, selectedTintMaterial)
       : null;
     if (lockedTintMesh) lockedTintMesh.renderOrder = 1;
+    if (lockedIconPoints) lockedIconPoints.renderOrder = 18;
     if (selectedTintMesh) selectedTintMesh.renderOrder = 2;
 
     const group = new Group();
@@ -859,10 +879,9 @@ export function ViewportPane({
     group.add(mesh);
     if (artworkMesh) group.add(artworkMesh);
     if (lockedTintMesh) group.add(lockedTintMesh);
+    if (lockedIconPoints) group.add(lockedIconPoints);
     if (selectedTintMesh) group.add(selectedTintMesh);
     if (occludedSolidEdges) group.add(occludedSolidEdges.line);
-    if (occludedCreaseEdges) group.add(occludedCreaseEdges.line);
-    if (occludedDashedEdges) group.add(occludedDashedEdges.line);
     group.add(
       solidEdges.line,
       creaseEdges.line,
@@ -876,8 +895,6 @@ export function ViewportPane({
       creaseEdges,
       dashedEdges,
       occludedSolidEdges,
-      occludedCreaseEdges,
-      occludedDashedEdges,
       selectedLine,
       hoverLine,
     ];
@@ -918,12 +935,6 @@ export function ViewportPane({
       if (occludedSolidEdgesRef.current === occludedSolidEdges) {
         occludedSolidEdgesRef.current = null;
       }
-      if (occludedCreaseEdgesRef.current === occludedCreaseEdges) {
-        occludedCreaseEdgesRef.current = null;
-      }
-      if (occludedDashedEdgesRef.current === occludedDashedEdges) {
-        occludedDashedEdgesRef.current = null;
-      }
       if (interactive) {
         viewport.picking.unregister(mesh);
         viewport.picking.unregister(edgePickLines);
@@ -939,10 +950,6 @@ export function ViewportPane({
       dashedEdges.material.dispose();
       occludedSolidEdges?.geometry.dispose();
       occludedSolidEdges?.material.dispose();
-      occludedCreaseEdges?.geometry.dispose();
-      occludedCreaseEdges?.material.dispose();
-      occludedDashedEdges?.geometry.dispose();
-      occludedDashedEdges?.material.dispose();
       edgePickMaterial.dispose();
       selectedLine.geometry.dispose();
       selectedLine.material.dispose();
@@ -951,6 +958,8 @@ export function ViewportPane({
       selectedEdgeSource.dispose();
       hoverEdgeSource.dispose();
       lockedTintMaterial.dispose();
+      lockedIconMaterial.dispose();
+      lockedIconTexture.dispose();
       selectedTintMaterial.dispose();
       disposeSceneData(data);
       sceneDataRef.current = null;

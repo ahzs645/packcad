@@ -28,6 +28,7 @@ describe("source edge appearance", () => {
     expect(resolveEdgeStyle(
       model, crease, 0, "mountain-valley", "flat-2d", false, false,
     )).toMatchObject({ color: SOURCE_2D_CREASE_COLOR, dashed: false });
+    expect(SOURCE_3D_CREASE_COLOR).toBe("#b66a61");
   });
 
   it("uses one blue panel selection with a white perimeter", () => {

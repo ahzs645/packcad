@@ -5,8 +5,8 @@
 //
 // The reference works on a TRIANGULATED mesh and minimises, by a Newton /
 // projective step with a mass-matrix regulariser, four constraint families:
-//   - DistanceConstraint           on every real edge          G = 1000·L/scale
-//   - TriangulationDistance        on every fan diagonal        G = 1000·L/scale
+//   - DistanceConstraint           on every real edge          G = 1000·scale/L
+//   - TriangulationDistance        on every fan diagonal        G = 1000·scale/L
 //   - FacetDihedralConstraint      hold each facet flat (t=0)   G =    1·L/scale  (soft)
 //   - CreaseDihedralConstraint     drive crease to fold angle    G =   10·L/scale
 // Each step assembles  (CᵀGC + M) Δ = CᵀG·c  (c = signed constraint error),
@@ -225,7 +225,10 @@ export function foldNewton(
     if (seenEdge.has(k)) return;
     seenEdge.add(k);
     const rest = flatDist(a, b) / scale;
-    edges.push({ kind: "edge", i: a, j: b, rest, G: STIFFNESS_EDGE_LENGTH * rest });
+    // DistanceConstraint.geometricStiffness uses `_invTargetValue`, where the
+    // normalized target is L / scale. Short edges therefore receive *more*
+    // stiffness, which is especially important for carton gable closures.
+    edges.push({ kind: "edge", i: a, j: b, rest, G: STIFFNESS_EDGE_LENGTH / rest });
   };
   for (const [a, b] of model.edgesVertices) addEdge(a, b);
   for (const tris of faceTris) for (const [i, j, k] of tris) {

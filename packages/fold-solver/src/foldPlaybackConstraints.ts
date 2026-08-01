@@ -145,7 +145,10 @@ export function resolvedKeyframeAngles(
   return Object.fromEntries(
     Object.entries(keyframe.creaseAnglesDeg).map(([edgeKey, angle]) => {
       const edge = Number(edgeKey);
-      const sign = keyframe.creaseBranchSigns?.[edge] ?? 1;
+      // Legacy PackCAD operations encode the branch directly in the authored
+      // target angle. Newer fixtures can override it with creaseBranchSigns,
+      // but an absent override must not erase a negative legacy target.
+      const sign = keyframe.creaseBranchSigns?.[edge] ?? (angle < 0 ? -1 : 1);
       return [edge, Math.abs(angle) * sign];
     }),
   );

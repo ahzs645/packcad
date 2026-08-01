@@ -63,6 +63,13 @@ export type FoldModel = {
   /** Per-face UUIDs (importer `facesAdded`), index-aligned to facesVertices. */
   facesIDs: string[];
   edgesVertices: Array<[number, number]>;
+  /**
+   * Bézier control points for each edge, in the edge's v0 -> v1 direction.
+   * PackCAD stores control-point indices after the two endpoint indices in
+   * `edges_vertices`.  The solver only needs the endpoints, while the renderer
+   * needs these coordinates to reproduce the authored curved cut boundary.
+   */
+  edgeControlPoints?: number[][][];
   edgesAssignment: string[];
   facesVertices: number[][]; // ordered vertex-index loop per face
   facesEdges: number[][];
@@ -178,6 +185,11 @@ export function buildFoldModel(design: PackCadDesign): FoldModel | null {
   facesAdded.forEach((uuid, i) => faceIndexByUuid.set(uuid, i));
 
   const edgesVertices = fold.edges_vertices.map(([a, b]) => [a, b] as [number, number]);
+  const edgeControlPoints = fold.edges_vertices.map((edge) =>
+    edge.slice(2).flatMap((controlPointIndex) => {
+      const point = fold.controlPoints_coords?.[controlPointIndex];
+      return point && point.length >= 2 ? [[point[0], point[1]]] : [];
+    }));
   const facesEdges = fold.faces_edges.map((edges) => edges.slice());
   // Build face vertex loops with a globally-consistent CCW winding: prefer the
   // importer's `faces_edges_orientation` (exact); otherwise reconstruct by edge
@@ -272,6 +284,7 @@ export function buildFoldModel(design: PackCadDesign): FoldModel | null {
     verticesIDs: verticesAdded.slice(),
     facesIDs: facesAdded.slice(),
     edgesVertices,
+    edgeControlPoints,
     edgesAssignment: fold.edges_assignment.slice(),
     facesVertices,
     facesEdges,

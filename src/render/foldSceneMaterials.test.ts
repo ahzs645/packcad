@@ -56,21 +56,35 @@ describe("fold scene material groups", () => {
 
     expect(settled.isSolved).toBe(true);
     expect(scene.timelineSolve.method).toBe("source-iterative");
-    expect(scene.geometry.groups.map((group) => group.materialIndex)).toEqual([0, 1, 2]);
+    expect(scene.geometry.groups.map((group) => group.materialIndex)).toEqual([0, 1, 2, 3]);
     expect(scene.geometry.groups.every((group) => group.count > 0)).toBe(true);
+    expect(scene.geometry.groups[2].count).toBe(
+      scene.meta.cutEdgeIndexCount
+        - scene.meta.closedSeamCapIndexCount
+        + scene.meta.foldHingeSidebandIndexCount,
+    );
+    expect(scene.geometry.groups[3].count).toBe(scene.meta.closedSeamCapIndexCount);
     expect(materials.base.map((material) => material.map)).toEqual([
       faceTexture,
       faceTexture,
+      edgeTexture,
       edgeTexture,
     ]);
     expect(materials.base.map((material) => material.side)).toEqual([
       FrontSide,
       BackSide,
       DoubleSide,
+      DoubleSide,
     ]);
+    expect(materials.base[2].color.r).toBeLessThan(materials.base[0].color.r);
+    expect(materials.base[2].color.r).toBeGreaterThan(materials.base[2].color.g);
+    expect(materials.base[2].color.g).toBeGreaterThan(materials.base[2].color.b);
+    expect(materials.base[3].color.getHSL({ h: 0, s: 0, l: 0 }).l)
+      .toBeGreaterThan(materials.base[2].color.getHSL({ h: 0, s: 0, l: 0 }).l);
     expect(materials.artwork?.map((material) => material.map)).toEqual([
       frontTexture,
       backTexture,
+      null,
       null,
     ]);
     expect(materials.artwork?.slice(0, 2).every((material) =>
@@ -97,6 +111,7 @@ describe("fold scene material groups", () => {
     faceTexture.dispose();
     scene.geometry.dispose();
     scene.lockedTintGeometry?.dispose();
+    scene.lockedIconGeometry?.dispose();
     scene.selectedTintGeometry?.dispose();
     scene.solidEdgeGeometry.dispose();
     scene.creaseEdgeGeometry.dispose();

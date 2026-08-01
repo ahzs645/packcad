@@ -14,6 +14,7 @@ import {
 function disposeScene(scene: FoldSceneData): void {
   scene.geometry.dispose();
   scene.lockedTintGeometry?.dispose();
+  scene.lockedIconGeometry?.dispose();
   scene.selectedTintGeometry?.dispose();
   scene.solidEdgeGeometry.dispose();
   scene.creaseEdgeGeometry.dispose();
@@ -57,11 +58,38 @@ describe("fold scene frame updates", () => {
     expect(selected.selectedTintGeometry).not.toBeNull();
     expect(selected.lockedTintGeometry?.getAttribute("position").count ?? 0)
       .toBeLessThan(unselected.lockedTintGeometry?.getAttribute("position").count ?? 0);
+    expect(selected.lockedIconGeometry?.getAttribute("position").count ?? 0)
+      .toBe(selected.meta.lockedFaceCount * 2);
     expect(selected.solidEdgeGeometry.getAttribute("position").count).toBeGreaterThan(0);
+    expect(selected.segmentEdgeIndex.length).toBeGreaterThan(model.edgesVertices.length);
     expect(selected.creaseEdgeGeometry.getAttribute("position").count).toBeGreaterThan(0);
 
     disposeScene(unselected);
     disposeScene(selected);
+  });
+
+  it("renders one cut-edge band at each fully folded K5 corner", () => {
+    const project = createMailerBoxProject();
+    const model = project.foldModel;
+    if (!model) throw new Error("MailerBox fixture did not produce a fold model");
+    const scene = buildFoldScene({
+      model,
+      projection: "folded-3d",
+      foldStepIndex: 5,
+      foldAngle: 90,
+      thicknessMm: project.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+    });
+
+    expect(scene.meta.closedSeamEdgeCount).toBe(4);
+    expect(scene.meta.closedSeamCapIndexCount).toBe(24);
+    expect(scene.geometry.groups.at(-1)).toMatchObject({
+      count: 24,
+      materialIndex: 3,
+    });
+
+    disposeScene(scene);
   });
 
   it("reuses one structural scene while mutating frame positions in place", () => {
