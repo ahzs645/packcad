@@ -93,7 +93,6 @@ importers:
       '@packcad/format':
         specifier: workspace:*
         version: link:../packcad-format
-    devDependencies:
       cdt2d:
         specifier: ^1.0.0
         version: 1.0.0

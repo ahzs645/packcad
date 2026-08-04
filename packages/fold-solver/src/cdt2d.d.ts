@@ -1,6 +1,5 @@
-// `cdt2d` ships no types. It is a devDependency retained ONLY so the R2 parity tests can
-// compare the engine's delaunator triangulation against packager's original one; it is not
-// used by shipped code. Declaration copied from packager/src/cdt2d.d.ts.
+// `cdt2d` ships no types. Declaration copied from packager/src/cdt2d.d.ts for
+// the production face-triangulation path and its source-parity tests.
 declare module "cdt2d" {
   export type Cdt2dOptions = {
     delaunay?: boolean;

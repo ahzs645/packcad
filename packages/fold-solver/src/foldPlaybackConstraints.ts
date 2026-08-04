@@ -1,7 +1,8 @@
 import type { FoldKeyframe, FoldModel } from "@packcad/format";
+import { triangulateFoldModelFaces } from "./faceTriangulation";
 import {
   manifoldHinges,
-  faceLoopNormal,
+  faceTriangulationNormal,
   unwrapFoldAngle,
   type FoldBranchSigns,
 } from "./foldBranchState";
@@ -103,18 +104,24 @@ export function measureCreaseAnglesDegrees(
   branchSigns: FoldBranchSigns = {},
 ): Record<number, number> {
   const measured: Record<number, number> = {};
+  const faceTriangles = triangulateFoldModelFaces(model, positions);
+  const faceNormals = faceTriangles.map((triangles) =>
+    faceTriangulationNormal(positions, triangles),
+  );
   for (const hinge of manifoldHinges(model)) {
     const { edge, a, b, f1, f2 } = hinge;
     // `PEdge.foldAngle3DRadians` -- the two adjacent faces' normals, not the
     // apex triangles'. This has to agree with the solver's crease measure,
     // because the implicit "hold at the incoming angle" targets are read here.
-    const firstNormal = faceLoopNormal(positions, model.facesVertices[f1]);
-    const secondNormal = faceLoopNormal(positions, model.facesVertices[f2]);
+    const firstNormal = faceNormals[f1];
+    const secondNormal = faceNormals[f2];
     const edgeDirection = normalize(subtract(positions[b], positions[a]));
-    const wrapped = Math.atan2(
-      dot(cross(firstNormal, secondNormal), edgeDirection),
-      dot(firstNormal, secondNormal),
-    );
+    // `foldAngle3DRadiansFromNormals` gets the magnitude from acos(n1.n2)
+    // and uses the edge direction only to choose its sign. atan2 of the triple
+    // product is not equivalent when a bowed face's normal cross-product is no
+    // longer parallel to every subdivided segment of the shared curved edge.
+    let wrapped = Math.acos(Math.max(-1, Math.min(1, dot(firstNormal, secondNormal))));
+    if (dot(cross(firstNormal, secondNormal), edgeDirection) < 0) wrapped *= -1;
     measured[edge] = unwrapFoldAngle(wrapped, branchSigns[edge]) * 180 / Math.PI;
   }
   return measured;

@@ -72,6 +72,16 @@ import type {
   EdgeColorMode,
   PanelColorMode,
 } from "../render/foldViewSettings";
+import {
+  beginSettledFoldStepAutoFit,
+  foldStepFitPadding,
+  foldStepFrame,
+  hasFoldPositionsForModel,
+  isSameFoldStepFrame,
+  updateSettledFoldStepAutoFit,
+  type FoldStepFrame,
+  type SettledFoldStepAutoFit,
+} from "../render/foldStepAutoFit";
 import { sourceIsometricCameraState } from "../render/sourceCamera";
 
 const SOURCE_3D_CUT_LINE_WIDTH = 1.5;
@@ -375,15 +385,8 @@ export function ViewportPane({
   const creaseEdgesRef = useRef<FatEdges | null>(null);
   const dashedEdgesRef = useRef<FatEdges | null>(null);
   const occludedSolidEdgesRef = useRef<FatEdges | null>(null);
-  const autoFitRef = useRef<{
-    model: PackagingProject["foldModel"];
-    viewMode: PackagingProject["viewMode"];
-  } | null>(null);
-  const settledAutoFitRef = useRef<{
-    model: PackagingProject["foldModel"];
-    sawPlayback: boolean;
-    fitted: boolean;
-  } | null>(null);
+  const autoFitRef = useRef<FoldStepFrame | null>(null);
+  const settledAutoFitRef = useRef<SettledFoldStepAutoFit | null>(null);
   const onSelectFaceRef = useRef(onSelectFace);
   onSelectFaceRef.current = onSelectFace;
   const onSelectFoldEdgeRef = useRef(onSelectFoldEdge);
@@ -405,10 +408,10 @@ export function ViewportPane({
     if (!viewport || !sceneObjectRef.current) return;
     viewport.camera.fit(
       new Box3().setFromObject(sceneObjectRef.current),
-      viewMode === "2d" ? 1.08 : 1.1,
+      foldStepFitPadding(viewMode, compact),
     );
     viewport.invalidate();
-  }, [viewMode, viewport]);
+  }, [compact, viewMode, viewport]);
 
   useEffect(() => {
     if (fitNonce > 0) fitToView();
@@ -705,7 +708,7 @@ export function ViewportPane({
 
   useEffect(() => {
     const data = sceneDataRef.current;
-    if (!data || !viewport || viewMode === "2d") return;
+    if (!data || !model || !viewport || viewMode === "2d") return;
     updateFoldScenePositions(data, foldPositionInputRef.current);
     updateFatEdgePositions(solidEdgesRef.current, data.solidEdgeGeometry);
     updateFatEdgePositions(creaseEdgesRef.current, data.creaseEdgeGeometry);
@@ -727,25 +730,25 @@ export function ViewportPane({
         : data.positionsByEdge.get(hoveredFoldEdgeIndexRef.current),
     );
     viewport.invalidate();
-    // Source projects normally open on their final keyframe. The scene group is
-    // first created from the flat fallback while the worker settles that fold,
-    // so the initial group-level fit can leave the finished package extremely
-    // small. Reframe once when this model's first settled state arrives; never
-    // refit continuously while the user plays or scrubs the simulation.
-    let settledAutoFit = settledAutoFitRef.current;
-    if (!settledAutoFit || settledAutoFit.model !== model) {
-      settledAutoFit = { model, sawPlayback: false, fitted: false };
-      settledAutoFitRef.current = settledAutoFit;
-    }
-    if (foldPlayback.playing) settledAutoFit.sawPlayback = true;
-    if (
-      !settledAutoFit.fitted
-      && settledAutoFit.sawPlayback
-      && !foldPlayback.playing
-      && (settlement?.positions || foldPlayback.positions)
-    ) {
-      settledAutoFit.fitted = true;
-      fitToView();
+    // A direct keyframe click creates a paused player with no positions while
+    // the settlement worker catches up. Fit its fallback scene immediately,
+    // then reframe exactly once when the final positions arrive. Playback is
+    // allowed to move freely and receives one fit only after it stops.
+    const frame = foldStepFrame(model, viewMode, foldStepIndex);
+    const settledAutoFit = settledAutoFitRef.current;
+    if (settledAutoFit) {
+      const result = updateSettledFoldStepAutoFit(
+        settledAutoFit,
+        frame,
+        foldPlayback.playing,
+        hasFoldPositionsForModel(
+          model,
+          foldPlayback.positions,
+          settlement?.positions,
+        ),
+      );
+      settledAutoFitRef.current = result.state;
+      if (result.fit) fitToView();
     }
   }, [
     fitToView,
@@ -757,6 +760,7 @@ export function ViewportPane({
     settlement?.maxAngleErrorDeg,
     settlement?.maxEdgeError,
     settlement?.positions,
+    foldStepIndex,
     model,
     viewMode,
     viewport,
@@ -1030,13 +1034,20 @@ export function ViewportPane({
       viewport.picking.register(mesh, "fold-shell", "face", ["face"]);
       viewport.picking.register(edgePickLines, "fold-edges", "crease", ["edge"]);
     }
-    const autoFit = autoFitRef.current;
-    if (!autoFit || autoFit.model !== model || autoFit.viewMode !== viewMode) {
-      autoFitRef.current = { model, viewMode };
-      viewport.camera.fit(
-        new Box3().setFromObject(group),
-        viewMode === "2d" ? 1.08 : compact ? 1.55 : 1.1,
+    const frame = foldStepFrame(model, viewMode, foldStepIndex);
+    if (!isSameFoldStepFrame(autoFitRef.current, frame)) {
+      autoFitRef.current = frame;
+      settledAutoFitRef.current = beginSettledFoldStepAutoFit(
+        frame,
+        foldPlayback.playing,
+        hasFoldPositionsForModel(model, positionInput.foldPositions),
       );
+      if (!foldPlayback.playing) {
+        viewport.camera.fit(
+          new Box3().setFromObject(group),
+          foldStepFitPadding(viewMode, compact),
+        );
+      }
     }
     viewport.invalidate();
     onSceneObject?.(group);

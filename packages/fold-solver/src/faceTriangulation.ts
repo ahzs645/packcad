@@ -1,124 +1,182 @@
 // Constrained-Delaunay face triangulation for the solver.
 //
 // The reference triangulates each face with cdt2d, a *constrained Delaunay*
-// mesher. `@atelier/geometry`'s `triangulateFace` returns a valid triangulation
-// but does not maximise the minimum angle, and every facet dihedral Jacobian
-// carries 1/tan(sector angle) and 1/leverArm terms, both of which blow up on a
-// sliver. Lawson edge flipping turns any triangulation of a simple polygon into
-// its constrained Delaunay triangulation, so this refines what `triangulateFace`
-// produces rather than replacing the mesher.
+// mesher. `@atelier/geometry`'s `triangulateFace` returns a valid triangulation,
+// but alternate diagonals change the facet Jacobians on nearly cocircular
+// panels, so the solver uses cdt2d directly for source-compatible tie-breaking.
 //
-// Keep the expectations here modest: measured against the reference's own
-// captured `face.triangulation`, this still picks a different diagonal on 27 of
-// the pillow box's 67 faces (35 of 191 diagonals), and substituting cdt2d's
-// exact diagonals moves the converged K1 fold by about half a pixel. The
-// triangulation is not what makes a fold match the reference -- the curve
-// discretisation (see `curveSubdivision`) and measuring crease angles from face
-// rather than triangle normals (see `faceLoopNormal`) are.
+// PVertex position2D is face-local storage in the source object model, but the
+// imported crease pattern gives every copy of a welded vertex the same value.
+// Those values are the SVG coordinates recentered on the pattern bounding box
+// and converted from px to inches. Reproduce that arithmetic exactly because
+// cdt2d's choice on cocircular panels is floating-point sensitive.
 
-import { triangulateFace } from "@atelier/geometry";
+/// <reference path="./cdt2d.d.ts" />
+
+import cdt2d from "cdt2d";
+import type { FoldModel } from "@packcad/format";
 
 type Triangle = [number, number, number];
 type Point = readonly number[];
 
-const MAX_FLIP_PASSES = 64;
-
-function cross(ax: number, ay: number, bx: number, by: number): number {
-  return ax * by - ay * bx;
-}
-
-function signedArea(p: Point, q: Point, r: Point): number {
-  return cross(q[0] - p[0], q[1] - p[1], r[0] - p[0], r[1] - p[1]);
-}
-
-/** > 0 when `d` lies inside the circumcircle of the CCW triangle (a, b, c). */
-function inCircle(a: Point, b: Point, c: Point, d: Point): number {
-  const ax = a[0] - d[0];
-  const ay = a[1] - d[1];
-  const bx = b[0] - d[0];
-  const by = b[1] - d[1];
-  const cx = c[0] - d[0];
-  const cy = c[1] - d[1];
-  return (
-    (ax * ax + ay * ay) * cross(bx, by, cx, cy)
-    - (bx * bx + by * by) * cross(ax, ay, cx, cy)
-    + (cx * cx + cy * cy) * cross(ax, ay, bx, by)
-  );
-}
-
-function orient(triangle: Triangle, coords: ReadonlyArray<Point>): Triangle {
-  const [a, b, c] = triangle;
-  return signedArea(coords[a], coords[b], coords[c]) < 0 ? [a, c, b] : triangle;
-}
-
-function apexOf(triangle: Triangle, a: number, b: number): number | null {
-  const found = triangle.find((v) => v !== a && v !== b);
-  return found === undefined ? null : found;
-}
-
-function edgeKey(a: number, b: number): string {
-  return a < b ? `${a}:${b}` : `${b}:${a}`;
-}
-
 /**
- * Triangulate a face loop and refine it to the constrained Delaunay
- * triangulation. Boundary edges of the loop are never flipped, so the face
- * outline (including flattened curve pieces) is preserved exactly.
+ * Triangulate a face loop with the same constrained-Delaunay implementation
+ * as PackCAD. Keeping cdt2d's exact tie-breaking matters for the Newton
+ * trajectory: alternate diagonals are geometrically valid, but they produce a
+ * different facet Jacobian on the nearly cocircular pillow-box end panels.
  */
 export function triangulateFaceDelaunay(
   loop: number[],
   coords: ReadonlyArray<Point>,
 ): Triangle[] {
-  const triangles = triangulateFace(loop, coords).map((t) => orient(t as Triangle, coords));
-  if (triangles.length < 2) return triangles;
+  const count = loop.length;
+  if (count < 3) return [];
+  if (count === 3) return [[loop[0], loop[1], loop[2]]];
+  const positions = loop.map((vertex) => [coords[vertex][0], coords[vertex][1]]);
+  const boundary = loop.map((_, index) => [index, (index + 1) % count] as [number, number]);
+  const triangles = cdt2d(positions, boundary, { exterior: false });
+  if (triangles.length === 0) throw new Error("cdt2d triangulation failed");
+  return triangles.map(([a, b, c]) => [loop[a], loop[b], loop[c]] as Triangle);
+}
 
-  const boundary = new Set<string>();
-  for (let i = 0; i < loop.length; i += 1) {
-    boundary.add(edgeKey(loop[i], loop[(i + 1) % loop.length]));
+/**
+ * Convert FoldModel's imported SVG coordinates into PackCAD Pattern2D space.
+ * This is distinct from the later 3D folding-setup transform, which centres the
+ * fixed face: FaceTriangulation invokes cdt2d from PVertex.position2D.
+ */
+export function triangulateFoldModelFaces(
+  model: FoldModel,
+  positions3D?: ReadonlyArray<Point>,
+): Triangle[][] {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of model.verticesCoords) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  const unitScale = model.coordinateUnit === "px" ? 72 : 1;
+  const scaleFactor = 1 / unitScale;
+  const originX = Number.isFinite(minX + maxX)
+    ? (minX * scaleFactor + maxX * scaleFactor) / 2
+    : 0;
+  const originY = Number.isFinite(minY + maxY)
+    ? (minY * scaleFactor + maxY * scaleFactor) / 2
+    : 0;
+  const sourceCoords = model.verticesCoords.map(([x, y]) => [
+    x * scaleFactor - originX,
+    y * scaleFactor - originY,
+  ]);
+  if (!positions3D) {
+    return model.facesVertices.map((loop) => triangulateFaceDelaunay(loop, sourceCoords));
   }
 
-  for (let pass = 0; pass < MAX_FLIP_PASSES; pass += 1) {
-    // interior edge -> the (at most two) triangles that share it
-    const shared = new Map<string, number[]>();
-    triangles.forEach((triangle, index) => {
-      for (let e = 0; e < 3; e += 1) {
-        const key = edgeKey(triangle[e], triangle[(e + 1) % 3]);
-        if (boundary.has(key)) continue;
-        const list = shared.get(key);
-        if (list) list.push(index);
-        else shared.set(key, [index]);
-      }
-    });
-
-    let flipped = false;
-    for (const [key, owners] of shared) {
-      if (owners.length !== 2) continue;
-      const [a, b] = key.split(":").map(Number);
-      const [i, j] = owners;
-      const c = apexOf(triangles[i], a, b);
-      const d = apexOf(triangles[j], a, b);
-      if (c === null || d === null) continue;
-
-      const pa = coords[a];
-      const pb = coords[b];
-      const pc = coords[c];
-      const pd = coords[d];
-      // Only flip inside a strictly convex quad, otherwise the result overlaps.
-      const convex = signedArea(pc, pa, pd) > 0 === signedArea(pc, pd, pb) > 0
-        && Math.abs(signedArea(pc, pa, pd)) > 1e-12
-        && Math.abs(signedArea(pc, pd, pb)) > 1e-12;
-      if (!convex) continue;
-
-      const ccw: Triangle = signedArea(pa, pb, pc) > 0 ? [a, b, c] : [b, a, c];
-      if (inCircle(coords[ccw[0]], coords[ccw[1]], coords[ccw[2]], pd) <= 0) continue;
-
-      triangles[i] = orient([c, d, a], coords);
-      triangles[j] = orient([c, b, d], coords);
-      flipped = true;
-      break; // adjacency is stale after a flip; rebuild it
+  // The first operation starts from one globally flat sheet. At that point the
+  // source still uses its authored PVertex.position2D values, whose exact SVG
+  // import arithmetic controls cdt2d's cocircular tie-breaks. Only switch to
+  // current-geometry projection once an earlier operation has made the graph
+  // genuinely non-coplanar.
+  const p0 = positions3D[0];
+  let p1Index = 1;
+  let longest = 0;
+  for (let index = 1; index < positions3D.length; index += 1) {
+    const p = positions3D[index];
+    const distance = Math.hypot(p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]);
+    if (distance > longest) {
+      longest = distance;
+      p1Index = index;
     }
-    if (!flipped) break;
+  }
+  const p1 = positions3D[p1Index];
+  const dx = p1[0] - p0[0];
+  const dy = p1[1] - p0[1];
+  const dz = p1[2] - p0[2];
+  let planeX = 0;
+  let planeY = 0;
+  let planeZ = 0;
+  let planeLength = 0;
+  for (const p of positions3D) {
+    const ex = p[0] - p0[0];
+    const ey = p[1] - p0[1];
+    const ez = p[2] - p0[2];
+    const cx = dy * ez - dz * ey;
+    const cy = dz * ex - dx * ez;
+    const cz = dx * ey - dy * ex;
+    const crossLength = Math.hypot(cx, cy, cz);
+    if (crossLength > planeLength) {
+      planeLength = crossLength;
+      planeX = cx;
+      planeY = cy;
+      planeZ = cz;
+    }
+  }
+  if (planeLength > 0) {
+    planeX /= planeLength;
+    planeY /= planeLength;
+    planeZ /= planeLength;
+    let maxPlaneDistance = 0;
+    for (const p of positions3D) {
+      maxPlaneDistance = Math.max(maxPlaneDistance, Math.abs(
+        (p[0] - p0[0]) * planeX
+        + (p[1] - p0[1]) * planeY
+        + (p[2] - p0[2]) * planeZ,
+      ));
+    }
+    if (maxPlaneDistance <= Math.max(1, longest) * 1e-10) {
+      return model.facesVertices.map((loop) => triangulateFaceDelaunay(loop, sourceCoords));
+    }
   }
 
-  return triangles;
+  // FaceTriangulation refreshes cdt2d after the graph moves. It projects the
+  // current 3D vertices onto the face's `_normal3DApprox` plane first; therefore
+  // a later folding stage can legitimately use different diagonals than K0.
+  // Any orthonormal basis of that plane is equivalent up to a 2D rotation.
+  return model.facesVertices.map((loop) => {
+    let nx = 0;
+    let ny = 0;
+    let nz = 0;
+    for (let index = 0; index < loop.length; index += 1) {
+      const p = positions3D[loop[index]];
+      const q = positions3D[loop[(index + 1) % loop.length]];
+      nx += p[1] * q[2] - p[2] * q[1];
+      ny += p[2] * q[0] - p[0] * q[2];
+      nz += p[0] * q[1] - p[1] * q[0];
+    }
+    const normalLength = Math.hypot(nx, ny, nz);
+    if (normalLength < 1e-14) return triangulateFaceDelaunay(loop, sourceCoords);
+    nx /= normalLength;
+    ny /= normalLength;
+    nz /= normalLength;
+
+    // Pick the least parallel coordinate axis, project it into the face plane,
+    // then derive the second axis. This is the same orthogonal projection as
+    // rotating `_normal3DApprox` to +Z, without depending on an arbitrary spin.
+    let rx = 0;
+    let ry = 0;
+    let rz = 1;
+    if (Math.abs(nz) > 0.9) {
+      rx = 1;
+      ry = 0;
+      rz = 0;
+    }
+    const along = rx * nx + ry * ny + rz * nz;
+    let ux = rx - along * nx;
+    let uy = ry - along * ny;
+    let uz = rz - along * nz;
+    const uLength = Math.hypot(ux, uy, uz) || 1;
+    ux /= uLength;
+    uy /= uLength;
+    uz /= uLength;
+    const vx = ny * uz - nz * uy;
+    const vy = nz * ux - nx * uz;
+    const vz = nx * uy - ny * ux;
+    const projected = positions3D.map((point) => [
+      point[0] * ux + point[1] * uy + point[2] * uz,
+      point[0] * vx + point[1] * vy + point[2] * vz,
+    ]);
+    return triangulateFaceDelaunay(loop, projected);
+  });
 }

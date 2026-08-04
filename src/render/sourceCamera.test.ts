@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sourceIsometricCameraState } from "./sourceCamera";
 
 describe("source isometric camera", () => {
-  it("matches the centred PackCAD direction without changing orbit distance", () => {
+  it("matches the captured PackCAD direction without changing orbit distance", () => {
     const source = {
       kind: "orthographic" as const,
       position: [4, 5, 8] as [number, number, number],
@@ -19,15 +19,22 @@ describe("source isometric camera", () => {
     );
 
     expect(nextDistance).toBeCloseTo(sourceDistance, 10);
-    expect(
-      (next.position[0] - next.target[0])
-        / (next.position[2] - next.target[2]),
-    ).toBeCloseTo(4.8 / 5.8, 10);
-    expect(
-      (next.position[1] - next.target[1])
-        / (next.position[2] - next.target[2]),
-    ).toBeCloseTo(-4.8 / 5.8, 10);
+    const component = sourceDistance / Math.sqrt(3);
+    expect(next.position[0] - next.target[0]).toBeCloseTo(
+      component,
+      10,
+    );
+    expect(next.position[1] - next.target[1]).toBeCloseTo(
+      component,
+      10,
+    );
+    expect(next.position[2] - next.target[2]).toBeCloseTo(
+      component,
+      10,
+    );
     expect(next.target).toEqual(source.target);
     expect(next.zoom).toBe(source.zoom);
+    expect(next.kind).toBe(source.kind);
+    expect(next.fov).toBe(15);
   });
 });

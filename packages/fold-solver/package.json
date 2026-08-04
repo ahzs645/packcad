@@ -11,9 +11,7 @@
   "dependencies": {
     "@atelier/geometry": "file:../../../atelier/packages/geometry",
     "@atelier/sim": "file:../../../atelier/packages/sim",
-    "@packcad/format": "workspace:*"
-  },
-  "devDependencies": {
+    "@packcad/format": "workspace:*",
     "cdt2d": "^1.0.0"
   }
 }

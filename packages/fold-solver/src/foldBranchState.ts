@@ -30,7 +30,7 @@
 // and -179 on the next, and every "hold this component where it is" constraint
 // derived from that reading mirrors the panel.
 
-import { triangulateFaceDelaunay } from "./faceTriangulation";
+import { triangulateFoldModelFaces } from "./faceTriangulation";
 import type { FoldModel } from "@packcad/format";
 import type { Vec3 } from "./foldSolver";
 
@@ -52,17 +52,17 @@ export type FoldHinge = {
   w1: number;
   w2: number;
   /** The two adjacent faces, `f1` being the one whose loop traverses a->b. A
-   *  crease's fold angle is read from these, not from the apex triangles --
-   *  see `faceLoopNormal`. */
+   *  crease's fold angle is read from these faces' area-weighted triangulation
+   *  normals, not directly from the two apex triangles. */
   f1: number;
   f2: number;
 };
 
 /**
- * `FaceTriangulation._normal3DApprox`: the normalised Newell sum over a face's
- * whole boundary loop. The reference measures a crease's fold angle from the
- * two adjacent faces' normals (`PEdge.foldAngle3DRadians`) and only interior
- * facet dihedrals from triangle normals, which matters as soon as a face bows.
+ * Normalised boundary area vector. Retained for callers that explicitly need
+ * the reference's `FaceTriangulation._normal3DApprox`; crease angles use
+ * `faceTriangulationNormal` below because `PEdge.foldAngle3DRadians` reaches
+ * `Face.normal3D`, not `_normal3DApprox`.
  */
 export function faceLoopNormal(positions: Vec3[], loop: number[]): Vec3 {
   let nx = 0;
@@ -74,6 +74,41 @@ export function faceLoopNormal(positions: Vec3[], loop: number[]): Vec3 {
     nx += p[1] * q[2] - p[2] * q[1];
     ny += p[2] * q[0] - p[0] * q[2];
     nz += p[0] * q[1] - p[1] * q[0];
+  }
+  const length = Math.hypot(nx, ny, nz) || 1;
+  return [nx / length, ny / length, nz / length];
+}
+
+/**
+ * Exact `Face.normal3D` semantics: iterate the face's cdt2d triangles, add each
+ * current 3D unit normal multiplied by its current 3D area, then normalize.
+ * Although this is algebraically close to a boundary/Newell normal, preserving
+ * the source triangle decomposition and accumulation order matters on bowed
+ * curved panels and determines the implicit targets carried into later stages.
+ */
+export function faceTriangulationNormal(
+  positions: Vec3[],
+  triangles: ReadonlyArray<readonly [number, number, number]>,
+): Vec3 {
+  let nx = 0;
+  let ny = 0;
+  let nz = 0;
+  for (const [a, b, c] of triangles) {
+    const abx = positions[b][0] - positions[a][0];
+    const aby = positions[b][1] - positions[a][1];
+    const abz = positions[b][2] - positions[a][2];
+    const acx = positions[c][0] - positions[a][0];
+    const acy = positions[c][1] - positions[a][1];
+    const acz = positions[c][2] - positions[a][2];
+    const crossX = aby * acz - abz * acy;
+    const crossY = abz * acx - abx * acz;
+    const crossZ = abx * acy - aby * acx;
+    const doubleArea = Math.hypot(crossX, crossY, crossZ);
+    if (doubleArea === 0) continue;
+    const area = 0.5 * doubleArea;
+    nx += crossX / doubleArea * area;
+    ny += crossY / doubleArea * area;
+    nz += crossZ / doubleArea * area;
   }
   const length = Math.hypot(nx, ny, nz) || 1;
   return [nx / length, ny / length, nz / length];
@@ -95,8 +130,8 @@ export function edgeTraversal(loop: number[], a: number, b: number): number {
  * is the set the reference builds crease dihedral constraints for, so it is
  * also the set whose branch signs are latched.
  */
-export function manifoldHinges(model: FoldModel): FoldHinge[] {
-  const triangles = model.facesVertices.map((loop) => triangulateFaceDelaunay(loop, model.verticesCoords));
+export function manifoldHinges(model: FoldModel, positions?: Vec3[]): FoldHinge[] {
+  const triangles = triangulateFoldModelFaces(model, positions);
   const hinges: FoldHinge[] = [];
   model.edgeFaces.forEach((faces, edge) => {
     if (faces.length !== 2) return;

@@ -1,18 +1,13 @@
 import type { CameraState } from "@atelier/viewport";
 
-// PackCAD Mockup v1.3.x uses a centred, elevated front view for its
-// "isometric" preset from the elevated front-left diagonal. PackCAD's scene
-// remap reverses the reference renderer's depth axis, so the equivalent
-// viewport direction is (-4.8, 4.8, -5.8). Preserve the current orbit distance
-// and target while adopting it.
-const SOURCE_ISOMETRIC_X = -4.8;
-const SOURCE_ISOMETRIC_Y = 4.8;
-const SOURCE_ISOMETRIC_Z = -5.8;
-const SOURCE_ISOMETRIC_LENGTH = Math.hypot(
-  SOURCE_ISOMETRIC_X,
-  SOURCE_ISOMETRIC_Y,
-  SOURCE_ISOMETRIC_Z,
-);
+// PackCAD starts its 3D camera at (100, -100, 100), with Z up, while its graph
+// visualization is scaled by (1, -1, 1). Atelier stores that same graph as
+// (graph.x, graph.z, -graph.y), with Y up, so the exact equivalent camera
+// offset is the positive XYZ diagonal. PackCAD also uses a deliberately narrow
+// 15-degree perspective lens. Preserve the current orbit distance and target;
+// the subsequent bounds fit supplies the active step's target and distance.
+const SOURCE_PERSPECTIVE_FOV = 15;
+const SOURCE_ISOMETRIC_COMPONENT = 1 / Math.sqrt(3);
 
 export function sourceIsometricCameraState(state: CameraState): CameraState {
   const [px, py, pz] = state.position;
@@ -21,9 +16,10 @@ export function sourceIsometricCameraState(state: CameraState): CameraState {
   return {
     ...state,
     position: [
-      tx + distance * SOURCE_ISOMETRIC_X / SOURCE_ISOMETRIC_LENGTH,
-      ty + distance * SOURCE_ISOMETRIC_Y / SOURCE_ISOMETRIC_LENGTH,
-      tz + distance * SOURCE_ISOMETRIC_Z / SOURCE_ISOMETRIC_LENGTH,
+      tx + distance * SOURCE_ISOMETRIC_COMPONENT,
+      ty + distance * SOURCE_ISOMETRIC_COMPONENT,
+      tz + distance * SOURCE_ISOMETRIC_COMPONENT,
     ],
+    fov: SOURCE_PERSPECTIVE_FOV,
   };
 }

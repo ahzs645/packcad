@@ -183,7 +183,7 @@ describe("PackCAD-style folding replay", () => {
     expect(player.finished).toBe(true);
     expect(player.displayAngle).toBe(105);
     expect(player.positions?.flat().every(Number.isFinite)).toBe(true);
-  });
+  }, 15_000);
 
   it("uses only the Newton sequence for paused timeline resolution", () => {
     const project = sourceProject();

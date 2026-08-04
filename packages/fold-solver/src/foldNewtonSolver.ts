@@ -24,10 +24,11 @@
 //
 // Framework-free + node-verifiable. Constants are the reference's verbatim.
 
-import { triangulateFaceDelaunay } from "./faceTriangulation";
+import { triangulateFoldModelFaces } from "./faceTriangulation";
 import type { FoldModel } from "@packcad/format";
 import {
   manifoldHinges,
+  faceTriangulationNormal,
   unwrapFoldAngle,
   updateBranchSign,
   type FoldBranchSigns,
@@ -227,6 +228,10 @@ export function foldNewton(
     /** Incoming per-edge fold branch (`preferredFoldAngle3DSign`). Carried in,
      *  maintained during the solve, and handed back on the result. */
     branchSigns?: FoldBranchSigns;
+    /** Geometry from which this stage's cached nominal lengths, stiffnesses,
+     *  and mass matrix were constructed. Incremental callers must preserve
+     *  this snapshot while `seed` advances from cycle to cycle. */
+    restPositions?: V3[];
     /** `OrigamiSimulation.__updateScaleFactor()`: the largest dimension of the
      *  bounding box of the geometry ENTERING this stage. Defaults to the flat
      *  sheet, which is what the first stage sees. */
@@ -236,30 +241,43 @@ export function foldNewton(
   const maxIters = options.maxIterations ?? MAX_SOLVER_ITERATIONS;
   const strainTol = options.strainTol ?? INCREMENTAL_SOLVE_TOL_DISTANCE;
   const N = model.verticesCoords.length;
-  const flat = (vi: number): V3 => [model.verticesCoords[vi][0], model.verticesCoords[vi][1], 0];
-  const flatDist = (a: number, b: number) => len(sub(flat(a), flat(b)));
+  const flatPositions = model.verticesCoords.map((v) => [v[0], v[1], 0] as V3);
+  const restPositions = (options.restPositions ?? options.seed ?? flatPositions).map(
+    (p) => [p[0], p[1], p[2]] as V3,
+  );
+  const restDist = (a: number, b: number) => len(sub(restPositions[a], restPositions[b]));
+
+  // Source ConstraintManager only instantiates constraints that touch at least
+  // one matrix-indexed (free) vertex. Besides matching its matrix dimensions,
+  // this avoids counting fixed-face-only bars and facets in the cached energy.
+  const pinned = new Array<boolean>(N).fill(false);
+  const fixedFaces =
+    options.fixedFaceIndices && options.fixedFaceIndices.length > 0
+      ? options.fixedFaceIndices
+      : [model.fixedFaceIndex];
+  for (const fi of fixedFaces) for (const vi of model.facesVertices[fi]) pinned[vi] = true;
+  for (const vi of options.fixedVertexIndices ?? []) pinned[vi] = true;
+  const allPinned = (...vertices: number[]): boolean => vertices.every((vertex) => pinned[vertex]);
 
   // scaleFactor = max bbox dimension of the geometry entering the stage. The
   // reference recomputes this in `__updateScaleFactor()` whenever the starting
   // graph changes -- i.e. once per folding operation, on the already-folded
   // incoming geometry -- and then holds it for the whole stage because the M/G
   // matrices are cached. It is not the flat sheet except on the first stage.
-  const scale = options.scale ?? boundingExtent(options.seed ?? model.verticesCoords.map(
-    (v) => [v[0], v[1], 0] as V3,
-  ));
+  const scale = options.scale ?? boundingExtent(restPositions);
 
   // ---- triangulate every face (ear clipping on the flat polygon) -----------
-  const faceTris: Tri[][] = model.facesVertices.map((loop) => triangulateFaceDelaunay(loop, model.verticesCoords));
+  const faceTris: Tri[][] = triangulateFoldModelFaces(model, restPositions);
 
   // ---- isometry bars: real edges + triangulation diagonals -----------------
   const edges: EdgeC[] = [];
   const seenEdge = new Set<string>();
   const addEdge = (a: number, b: number) => {
-    if (a === b) return;
+    if (a === b || allPinned(a, b)) return;
     const k = a < b ? `${a}:${b}` : `${b}:${a}`;
     if (seenEdge.has(k)) return;
     seenEdge.add(k);
-    const rest = flatDist(a, b) / scale;
+    const rest = restDist(a, b) / scale;
     // DistanceConstraint.geometricStiffness uses `_invTargetValue`, where the
     // normalized target is L / scale. Short edges therefore receive *more*
     // stiffness, which is especially important for carton gable closures.
@@ -294,13 +312,16 @@ export function foldNewton(
       let t1 = arr[0];
       let t2 = arr[1];
       if (triEdgeDir(t1, as, bs) !== 1) [t1, t2] = [t2, t1];
-      const rest = flatDist(as, bs) / scale;
+      const w1 = triApex(t1, as, bs);
+      const w2 = triApex(t2, as, bs);
+      if (allPinned(as, bs, w1, w2)) continue;
+      const rest = restDist(as, bs) / scale;
       dihs.push({
         kind: "dih",
         a: as,
         b: bs,
-        w1: triApex(t1, as, bs),
-        w2: triApex(t2, as, bs),
+        w1,
+        w2,
         target: 0,
         G: STIFFNESS_FACET_CREASE * rest,
         edge: -1,
@@ -329,7 +350,8 @@ export function foldNewton(
     if (!t1 || !t2) continue;
     const w1 = triApex(t1, a, b);
     const w2 = triApex(t2, a, b);
-    const rest = flatDist(a, b) / scale;
+    if (allPinned(a, b, w1, w2)) continue;
+    const rest = restDist(a, b) / scale;
     const c: DihC = {
       kind: "dih",
       a,
@@ -349,12 +371,15 @@ export function foldNewton(
     ? new Set(options.solvedEdgeIndices)
     : null;
 
-  // ---- mass matrix (lumped triangle areas, flat) ---------------------------
+  // ---- mass matrix (lumped triangle areas, stage starting graph) -----------
   const mass = new Float64Array(N);
   const invScale2 = 1 / (scale * scale);
   for (const tris of faceTris) {
     for (const [i, j, k] of tris) {
-      const area = 0.5 * len(cross(sub(flat(j), flat(i)), sub(flat(k), flat(i))));
+      const area = 0.5 * len(cross(
+        sub(restPositions[j], restPositions[i]),
+        sub(restPositions[k], restPositions[i]),
+      ));
       const share = (area * invScale2) / 3;
       mass[i] += share;
       mass[j] += share;
@@ -370,13 +395,6 @@ export function foldNewton(
   // Per-keyframe anchors hold part of the model rigid (the reference's
   // fixedFaceIDs/fixedVertexIDs): e.g. the carton body is pinned while the lid
   // folds against it, which both anchors the solve and holds the prior folds.
-  const pinned = new Array<boolean>(N).fill(false);
-  const fixedFaces =
-    options.fixedFaceIndices && options.fixedFaceIndices.length > 0
-      ? options.fixedFaceIndices
-      : [model.fixedFaceIndex];
-  for (const fi of fixedFaces) for (const vi of model.facesVertices[fi]) pinned[vi] = true;
-  for (const vi of options.fixedVertexIndices ?? []) pinned[vi] = true;
   const col = new Int32Array(N * 3).fill(-1);
   let F = 0;
   for (let v = 0; v < N; v += 1) if (!pinned[v]) for (let ax = 0; ax < 3; ax += 1) col[v * 3 + ax] = F++;
@@ -388,29 +406,15 @@ export function foldNewton(
 
   // ---- face normals ---------------------------------------------------------
   // A crease's fold angle comes from `PEdge.foldAngle3DRadians`, which reads the
-  // two adjacent *faces'* normals -- `FaceTriangulation._normal3DApprox`, the
-  // normalised Newell sum over the face's whole boundary loop. Only the interior
-  // (facet) dihedrals read triangle normals. The distinction is invisible while
-  // faces stay flat and decisive once they bow: the two measures differ by up to
-  // 17 degrees on the pillow box, and driving the wrong one leaves the reference's
-  // implicit "hold flat" constraints violated by that much.
+  // two adjacent `Face.normal3D` values. Each is the normalized, area-weighted
+  // sum of that face's current triangulation triangle normals. Only the interior
+  // facet dihedrals read one adjacent triangle normal directly.
   const faceNormals: Array<V3 | null> = model.facesVertices.map(() => null);
   const invalidateFaceNormals = (): void => { faceNormals.fill(null); };
   const faceNormal = (fi: number): V3 => {
     const cached = faceNormals[fi];
     if (cached) return cached;
-    const loop = model.facesVertices[fi];
-    let nx = 0;
-    let ny = 0;
-    let nz = 0;
-    for (let i = 0; i < loop.length; i += 1) {
-      const p = x[loop[i]];
-      const q = x[loop[(i + 1) % loop.length]];
-      nx += p[1] * q[2] - p[2] * q[1];
-      ny += p[2] * q[0] - p[0] * q[2];
-      nz += p[0] * q[1] - p[1] * q[0];
-    }
-    const n = norm([nx, ny, nz]);
+    const n = faceTriangulationNormal(x, faceTris[fi]);
     faceNormals[fi] = n;
     return n;
   };
@@ -432,7 +436,7 @@ export function foldNewton(
   // Edges whose four vertices are all pinned cannot move, and the reference
   // skips building a constraint for them, so they keep their incoming sign.
   const branchSigns: FoldBranchSigns = { ...(options.branchSigns ?? {}) };
-  const latchHinges = manifoldHinges(model).filter(
+  const latchHinges = manifoldHinges(model, restPositions).filter(
     (h) => !pinned[h.a] || !pinned[h.b] || !pinned[h.w1] || !pinned[h.w2],
   );
   // The latch is set by CreaseDihedralConstraint.updateCurrentValue, so it reads
@@ -732,7 +736,7 @@ export function foldNewton(
   // ---- metrics --------------------------------------------------------------
   let maxEdgeError = 0;
   for (const [a, b] of model.edgesVertices) {
-    const rest = flatDist(a, b);
+    const rest = restDist(a, b);
     if (rest < 1e-9) continue;
     maxEdgeError = Math.max(maxEdgeError, Math.abs(len(sub(x[a], x[b])) - rest) / rest);
   }
@@ -770,6 +774,9 @@ export function foldNewtonStage(
   const cap = options.maxIterations ?? MAX_SOLVER_ITERATIONS;
   let result: NewtonFold | null = null;
   let positions = options.seed;
+  const restPositions = (positions ?? model.verticesCoords.map((v) => [v[0], v[1], 0] as V3)).map(
+    (position) => [position[0], position[1], position[2]] as V3,
+  );
   let stepSize = ADAPTIVE_STEP_DEFAULT_STEP_SIZE;
   let iterations = 0;
   let stageConverged = false;
@@ -777,15 +784,14 @@ export function foldNewtonStage(
   // The scale factor is fixed for the whole stage (the reference caches M/G and
   // only re-derives them when the starting graph changes), so it is measured
   // once from the incoming geometry rather than per solver cycle.
-  const scale = options.scale ?? boundingExtent(
-    positions ?? model.verticesCoords.map((v) => [v[0], v[1], 0] as V3),
-  );
+  const scale = options.scale ?? boundingExtent(restPositions);
   let branchSigns = options.branchSigns;
 
   while (iterations < cap) {
     result = foldNewton(model, creaseAnglesDeg, {
       maxIterations: 1,
       seed: positions,
+      restPositions,
       fixedFaceIndices: options.fixedFaceIndices,
       fixedVertexIndices: options.fixedVertexIndices,
       solvedEdgeIndices: options.solvedEdgeIndices,
@@ -828,6 +834,7 @@ export function foldNewtonStage(
     ...foldNewton(model, creaseAnglesDeg, {
       maxIterations: 0,
       seed: positions,
+      restPositions,
       fixedFaceIndices: options.fixedFaceIndices,
       fixedVertexIndices: options.fixedVertexIndices,
       solvedEdgeIndices: options.solvedEdgeIndices,

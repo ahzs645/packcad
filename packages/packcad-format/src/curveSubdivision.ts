@@ -39,9 +39,31 @@ const SVG_PPI = 72;
 const CURVE_STEP_SIZE_PX = (1 / 8) * SVG_PPI;
 /** DEFAULT_SVG_IMPORT_CURVE_DISCRETIZATION_MAX_DEVIATION_IN = 1/80. */
 const CURVE_MAX_DEVIATION_PX = (1 / 80) * SVG_PPI;
-/** Samples used for the arc-length integral of each curve. */
-const ARC_SAMPLES = 4096;
 const NUMERICAL_TOL = 1e-12;
+
+// bezier-js uses 24-point Legendre-Gauss quadrature for `Bezier.length()`.
+// Keeping these constants and operation order exact also preserves the emitted
+// PVertex coordinate bits used later by cdt2d's cocircular tie-breaking.
+const LEGENDRE_T = [
+  -0.06405689286260563, 0.06405689286260563, -0.1911188674736163,
+  0.1911188674736163, -0.3150426796961634, 0.3150426796961634,
+  -0.4337935076260451, 0.4337935076260451, -0.5454214713888396,
+  0.5454214713888396, -0.6480936519369755, 0.6480936519369755,
+  -0.7401241915785544, 0.7401241915785544, -0.820001985973903,
+  0.820001985973903, -0.8864155270044011, 0.8864155270044011,
+  -0.9382745520027328, 0.9382745520027328, -0.9747285559713095,
+  0.9747285559713095, -0.9951872199970213, 0.9951872199970213,
+];
+const LEGENDRE_C = [
+  0.12793819534675216, 0.12793819534675216, 0.1258374563468283,
+  0.1258374563468283, 0.12167047292780339, 0.12167047292780339,
+  0.1155056680537256, 0.1155056680537256, 0.10744427011596563,
+  0.10744427011596563, 0.09761865210411388, 0.09761865210411388,
+  0.08619016153195327, 0.08619016153195327, 0.0733464814110803,
+  0.0733464814110803, 0.05929858491543678, 0.05929858491543678,
+  0.04427743881741981, 0.04427743881741981, 0.028531388628933663,
+  0.028531388628933663, 0.0123412297999872, 0.0123412297999872,
+];
 
 type Point = [number, number];
 type Cubic = [Point, Point, Point, Point];
@@ -49,22 +71,37 @@ type Cubic = [Point, Point, Point, Point];
 function at(curve: Cubic, t: number): Point {
   const u = 1 - t;
   const [p0, p1, p2, p3] = curve;
-  const b0 = u * u * u;
-  const b1 = 3 * u * u * t;
-  const b2 = 3 * u * t * t;
-  const b3 = t * t * t;
+  const u2 = u * u;
+  const t2 = t * t;
+  const b0 = u2 * u;
+  const b1 = u2 * t * 3;
+  const b2 = u * t2 * 3;
+  const b3 = t * t2;
   return [
     b0 * p0[0] + b1 * p1[0] + b2 * p2[0] + b3 * p3[0],
     b0 * p0[1] + b1 * p1[1] + b2 * p2[1] + b3 * p3[1],
   ];
 }
 
-/** Unit tangent at `t` (the reference's endpoint secant / `bezier.derivative`). */
-function tangentAt(curve: Cubic, t: number): Point {
+function tangentVectorAt(curve: Cubic, t: number): Point {
   const u = 1 - t;
   const [p0, p1, p2, p3] = curve;
-  const x = 3 * u * u * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]);
-  const y = 3 * u * u * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]);
+  const u2 = u * u;
+  const t2 = t * t;
+  const b0 = u2;
+  const b1 = u * t * 2;
+  const b2 = t2;
+  const d0: Point = [3 * (p1[0] - p0[0]), 3 * (p1[1] - p0[1])];
+  const d1: Point = [3 * (p2[0] - p1[0]), 3 * (p2[1] - p1[1])];
+  const d2: Point = [3 * (p3[0] - p2[0]), 3 * (p3[1] - p2[1])];
+  const x = b0 * d0[0] + b1 * d1[0] + b2 * d2[0];
+  const y = b0 * d0[1] + b1 * d1[1] + b2 * d2[1];
+  return [x, y];
+}
+
+/** Unit tangent at `t` (the reference's endpoint secant / `bezier.derivative`). */
+function tangentAt(curve: Cubic, t: number): Point {
+  const [x, y] = tangentVectorAt(curve, t);
   const length = Math.hypot(x, y);
   return length < NUMERICAL_TOL ? [0, 0] : [x / length, y / length];
 }
@@ -74,14 +111,13 @@ function distance(a: Point, b: Point): number {
 }
 
 function arcLength(curve: Cubic): number {
-  let total = 0;
-  let previous = at(curve, 0);
-  for (let i = 1; i <= ARC_SAMPLES; i += 1) {
-    const point = at(curve, i / ARC_SAMPLES);
-    total += distance(previous, point);
-    previous = point;
+  const z = 0.5;
+  let sum = 0;
+  for (let index = 0; index < LEGENDRE_T.length; index += 1) {
+    const derivative = tangentVectorAt(curve, z * LEGENDRE_T[index] + z);
+    sum += LEGENDRE_C[index] * Math.hypot(derivative[0], derivative[1]);
   }
-  return total;
+  return z * sum;
 }
 
 /**

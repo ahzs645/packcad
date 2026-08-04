@@ -29,6 +29,9 @@ export type FoldingPlayerState = {
   /** `__updateScaleFactor()` for the stage in flight: measured once from the
    *  geometry entering the stage, then held while it solves. */
   stageScale: number | null;
+  /** Starting graph retained while a stage advances one Newton cycle per
+   *  animation tick. Source constraints cache their nominal geometry here. */
+  stageRestPositions: Vec3[] | null;
   solverStepSize: number;
   solverMaxEdgeError: number;
   solverMaxAngleErrorDeg: number;
@@ -114,6 +117,7 @@ function freshSourceReplay(project: PackagingProject, base: FoldingPlayerState):
     stageConstraintAngles: null,
     stageIterations: 0,
     stageScale: null,
+    stageRestPositions: null,
     branchSigns: {},
     solverAccumulatorMs: 0,
     energyHistory: [],
@@ -148,6 +152,7 @@ export function createFoldingPlayer(
     stageConstraintAngles: null,
     stageIterations: 0,
     stageScale: null,
+    stageRestPositions: null,
     branchSigns: {},
     solverAccumulatorMs: 0,
     energyHistory: [],
@@ -245,9 +250,13 @@ function advanceSourceReplayStep(
   // then held, so the whole stage solves at one scale like the reference's
   // cached M/G matrices.
   const stageScale = player.stageScale ?? boundingExtent(positions);
+  const stageRestPositions = player.stageRestPositions ?? positions.map(
+    (position) => [position[0], position[1], position[2]] as Vec3,
+  );
   const result = foldNewton(model, stageConstraintAngles, {
     maxIterations: 1,
     seed: positions,
+    restPositions: stageRestPositions,
     fixedFaceIndices: keyframe.fixedFaceIndices,
     fixedVertexIndices: keyframe.fixedVertexIndices,
     solvedEdgeIndices: Object.keys(keyframe.creaseAnglesDeg).map(Number),
@@ -281,6 +290,7 @@ function advanceSourceReplayStep(
     stageConstraintAngles,
     stageIterations,
     stageScale,
+    stageRestPositions,
     branchSigns: result.branchSigns,
     solverAccumulatorMs: player.solverAccumulatorMs,
     energyHistory,
@@ -317,6 +327,7 @@ function advanceSourceReplayStep(
     stageIterations: 0,
     // Re-measured for the next stage from its own incoming geometry.
     stageScale: null,
+    stageRestPositions: null,
     solverAccumulatorMs: player.solverAccumulatorMs,
     energyHistory: [],
     priorTargetAngles,

@@ -1,13 +1,12 @@
 // R2 parity characterization (atelier/docs/MIGRATION.md risk R2).
 //
-// The engine standardised on `delaunator` (decision D6); the original packager code used
-// `cdt2d`. `faceDiagonals()` supplies the isometry bars that keep facets rigid in the Newton
-// solver, so a different triangulation is a different constraint set.
+// Historical comparison between Atelier's delaunator triangulation and PackCAD's `cdt2d`.
+// The production Newton solver now uses cdt2d; this characterization preserves the evidence
+// for that choice because a different diagonal produces a different facet constraint set.
 //
 // Both libraries are valid Delaunay triangulators, so they are NOT required to agree — on a
 // near-cocircular quad the diagonal choice is arbitrary. This test pins WHERE they diverge on
-// the real MailerBox fixture; r2FoldOutcome.test.ts proves the converged fold is unaffected.
-// `cdt2d` is a devDependency kept solely for this comparison; it is not shipped.
+// the real MailerBox fixture. r2FoldOutcome.test.ts guards the production cdt2d outcome.
 
 import cdt2d from "cdt2d";
 import { triangulateFace as triangulateFaceDelaunator } from "@atelier/geometry";
@@ -140,6 +139,6 @@ describe("R2: cdt2d vs delaunator triangulation parity", () => {
       const same = legacy.size === next.size && [...legacy].every((triangle) => next.has(triangle));
       if (!same) mismatches.push(faceIndex);
     });
-    expect(mismatches).toEqual([15, 27, 35, 40, 50, 60, 62]);
+    expect(mismatches).toEqual([6, 15, 20, 24, 27, 35, 37, 40, 50, 60, 61, 62]);
   });
 });
