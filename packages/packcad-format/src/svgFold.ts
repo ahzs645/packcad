@@ -495,14 +495,62 @@ export function buildFoldFromSvg(svg: string, filters: ImportSvgFilter[] = []): 
     edgeCurves = c2;
   }
 
+  // Drop dangling edges. Dieline score lines routinely overhang the panel they
+  // cross, and a stub with a degree-1 end bounds no face; left in, its vertices
+  // inflate the graph. This is the reference's Pattern2D.removeStrayEdges.
+  {
+    const alive = edges.map(() => true);
+    for (let pass = true; pass;) {
+      pass = false;
+      const degree = new Map<number, number>();
+      edges.forEach(([a, b], i) => {
+        if (!alive[i]) return;
+        degree.set(a, (degree.get(a) ?? 0) + 1);
+        degree.set(b, (degree.get(b) ?? 0) + 1);
+      });
+      edges.forEach(([a, b], i) => {
+        if (!alive[i]) return;
+        if ((degree.get(a) ?? 0) <= 1 || (degree.get(b) ?? 0) <= 1) {
+          alive[i] = false;
+          pass = true;
+        }
+      });
+    }
+    const keptEdges: Array<[number, number]> = [];
+    const keptAssign: string[] = [];
+    const keptCurves: Array<Cubic | null> = [];
+    edges.forEach((edge, i) => {
+      if (!alive[i]) return;
+      keptEdges.push(edge);
+      keptAssign.push(edgeAssign[i]);
+      keptCurves.push(edgeCurves[i] ?? null);
+    });
+    // Compact the vertex list to what survived, so no orphan points remain.
+    const remap = new Int32Array(verts.length).fill(-1);
+    const kept: Pt[] = [];
+    for (const [a, b] of keptEdges) {
+      for (const v of [a, b]) {
+        if (remap[v] < 0) {
+          remap[v] = kept.length;
+          kept.push(verts[v]);
+        }
+      }
+    }
+    edges = keptEdges.map(([a, b]) => [remap[a], remap[b]] as [number, number]);
+    edgeAssign = keptAssign;
+    edgeCurves = keptCurves;
+    verts.length = 0;
+    verts.push(...kept);
+  }
+
   // Half-edge planar face detection. Order the edges around a vertex by the
   // direction each one actually LEAVES in -- for a curve that is its handle, not
   // its chord, otherwise the two arcs of a lens sort identically and the
   // traversal cannot tell them apart.
-  type Half = { from: number; to: number; angle: number; edge: number };
+  type Half = { from: number; to: number; angle: number; tangent: number; edge: number };
   const halves: Half[] = [];
   const outByVertex: number[][] = verts.map(() => []);
-  const leaveAngle = (from: Pt, toward: Pt, fallback: Pt): number => {
+  const direction = (from: Pt, toward: Pt, fallback: Pt): number => {
     const dx = toward.x - from.x;
     const dy = toward.y - from.y;
     return Math.hypot(dx, dy) > 1e-9
@@ -515,7 +563,8 @@ export function buildFoldFromSvg(svg: string, filters: ImportSvgFilter[] = []): 
     halves.push({
       from: a,
       to: b,
-      angle: leaveAngle(verts[a], curve ? curve[1] : verts[b], verts[b]),
+      angle: direction(verts[a], verts[b], verts[b]),
+      tangent: direction(verts[a], curve ? curve[1] : verts[b], verts[b]),
       edge: ei,
     });
     outByVertex[a].push(ab);
@@ -523,12 +572,23 @@ export function buildFoldFromSvg(svg: string, filters: ImportSvgFilter[] = []): 
     halves.push({
       from: b,
       to: a,
-      angle: leaveAngle(verts[b], curve ? curve[2] : verts[a], verts[a]),
+      angle: direction(verts[b], verts[a], verts[a]),
+      tangent: direction(verts[b], curve ? curve[2] : verts[a], verts[a]),
       edge: ei,
     });
     outByVertex[b].push(ba);
   });
-  for (const list of outByVertex) list.sort((p, q) => halves[p].angle - halves[q].angle);
+  // Sort by the chord each edge spans, and only where two chords coincide fall
+  // back to the direction the edge actually leaves in -- that is the lens case,
+  // two different arcs joining the same pair of vertices, which a chord alone
+  // cannot separate.
+  for (const list of outByVertex) {
+    list.sort((p, q) => (
+      Math.abs(halves[p].angle - halves[q].angle) > 1e-9
+        ? halves[p].angle - halves[q].angle
+        : halves[p].tangent - halves[q].tangent
+    ));
+  }
   const twin = (h: number) => h ^ 1; // ab/ba are adjacent pairs
   // next(h): at the target vertex, take the edge clockwise-adjacent to the twin
   // among CCW-sorted outgoing edges, so interior faces trace counter-clockwise.
@@ -557,11 +617,27 @@ export function buildFoldFromSvg(svg: string, filters: ImportSvgFilter[] = []): 
     } while (cur !== h && guard < halves.length + 1);
     if (loop.length >= 3) {
       // Signed area: keep only counter-clockwise (bounded) faces; drop the
-      // single outer face (clockwise / largest).
-      let area = 0;
+      // single outer face (clockwise / largest). Integrate along the real
+      // boundary -- a face walled by outward-bulging arcs can have a chord
+      // polygon that is far too small, or even wound the other way.
+      const outline: Pt[] = [];
       for (let k = 0; k < loop.length; k++) {
-        const p = verts[loop[k]];
-        const q = verts[loop[(k + 1) % loop.length]];
+        const from = loop[k];
+        const curve = edgeCurves[loopEdges[k]];
+        if (!curve) {
+          outline.push(verts[from]);
+          continue;
+        }
+        const forward = edges[loopEdges[k]][0] === from;
+        for (let i = 0; i < CURVE_INTERSECT_SAMPLES; i += 1) {
+          const t = i / CURVE_INTERSECT_SAMPLES;
+          outline.push(cubicAt(curve, forward ? t : 1 - t));
+        }
+      }
+      let area = 0;
+      for (let k = 0; k < outline.length; k++) {
+        const p = outline[k];
+        const q = outline[(k + 1) % outline.length];
         area += p.x * q.y - q.x * p.y;
       }
       if (area > 0) {
