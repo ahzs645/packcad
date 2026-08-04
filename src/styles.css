@@ -486,7 +486,31 @@ input[type="number"] {
 }
 
 .step-status.non-rigid {
-  background: #f59e0b;
+  position: relative;
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+  flex-basis: 13px !important;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  color: #eab308;
+}
+
+.step-row .step-status.non-rigid .ui-icon {
+  color: #eab308;
+  stroke-width: 2.2;
+}
+
+.step-status.non-rigid::after {
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  color: #b77900;
+  content: "!";
+  font-size: 7px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .step-row[data-playback-active="true"] {

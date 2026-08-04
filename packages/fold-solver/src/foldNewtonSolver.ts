@@ -24,8 +24,14 @@
 //
 // Framework-free + node-verifiable. Constants are the reference's verbatim.
 
-import { triangulateFace } from "@atelier/geometry";
+import { triangulateFaceDelaunay } from "./faceTriangulation";
 import type { FoldModel } from "@packcad/format";
+import {
+  manifoldHinges,
+  unwrapFoldAngle,
+  updateBranchSign,
+  type FoldBranchSigns,
+} from "./foldBranchState";
 import {
   appendPriorTargets,
   sourceStageConstraintAngles,
@@ -74,7 +80,9 @@ function leverArm(P: V3[], w: number, a: number, b: number): number {
   const par = dot(d, e);
   return Math.sqrt(Math.max(0, dot(d, d) - par * par));
 }
-/** Signed fold angle: acos(n1·n2) signed by sign((n1×n2)·ê). flat = 0. */
+/** Signed fold angle: acos(n1·n2) signed by sign((n1×n2)·ê). flat = 0.
+ *  Wrapped to (-pi, pi], exactly like the reference's
+ *  `foldAngle3DRadiansFromNormals`. */
 function foldAngle(n1: V3, n2: V3, eHat: V3): number {
   const c = Math.max(-1, Math.min(1, dot(n1, n2)));
   let a = Math.acos(c);
@@ -114,6 +122,10 @@ export type NewtonFold = {
   stepSize: number;
   /** True when no valid decreasing/isometric step could be found. */
   stuck: boolean;
+  /** Latched per-edge fold branch after the last accepted step. Feed this back
+   *  into the next stage the way the reference carries `preferredFoldAngle3DSign`
+   *  from one operation's ending graph to the next one's starting graph. */
+  branchSigns: FoldBranchSigns;
 };
 
 type NewtonStageOptions = {
@@ -122,7 +134,22 @@ type NewtonStageOptions = {
   fixedFaceIndices?: number[];
   fixedVertexIndices?: number[];
   solvedEdgeIndices?: number[];
+  branchSigns?: FoldBranchSigns;
+  scale?: number;
 };
+
+/** `Graph.boundingBox3D` -> largest dimension, the reference's scale factor. */
+export function boundingExtent(points: V3[]): number {
+  const mn: V3 = [Infinity, Infinity, Infinity];
+  const mx: V3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) {
+    for (let k = 0; k < 3; k += 1) {
+      mn[k] = Math.min(mn[k], p[k]);
+      mx[k] = Math.max(mx[k], p[k]);
+    }
+  }
+  return Math.max(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1;
+}
 
 function stageEnergyPlateau(history: number[], relativeThreshold: number): boolean {
   if (history.length < ENERGY_DETECTION_WINDOW) return false;
@@ -192,6 +219,13 @@ export function foldNewton(
     solvedEdgeIndices?: number[];
     /** Persistent OrigamiSimulation line-search state (default 0.9). */
     initialStepSize?: number;
+    /** Incoming per-edge fold branch (`preferredFoldAngle3DSign`). Carried in,
+     *  maintained during the solve, and handed back on the result. */
+    branchSigns?: FoldBranchSigns;
+    /** `OrigamiSimulation.__updateScaleFactor()`: the largest dimension of the
+     *  bounding box of the geometry ENTERING this stage. Defaults to the flat
+     *  sheet, which is what the first stage sees. */
+    scale?: number;
   } = {},
 ): NewtonFold {
   const maxIters = options.maxIterations ?? MAX_SOLVER_ITERATIONS;
@@ -200,21 +234,17 @@ export function foldNewton(
   const flat = (vi: number): V3 => [model.verticesCoords[vi][0], model.verticesCoords[vi][1], 0];
   const flatDist = (a: number, b: number) => len(sub(flat(a), flat(b)));
 
-  // scaleFactor = max bbox dimension of the (flat) geometry — held constant, as
-  // the reference caches the M/G matrices and only invalidates on topology change.
-  const mn: V3 = [Infinity, Infinity, Infinity];
-  const mx: V3 = [-Infinity, -Infinity, -Infinity];
-  for (let v = 0; v < N; v += 1) {
-    const p = flat(v);
-    for (let k = 0; k < 3; k += 1) {
-      mn[k] = Math.min(mn[k], p[k]);
-      mx[k] = Math.max(mx[k], p[k]);
-    }
-  }
-  const scale = Math.max(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1;
+  // scaleFactor = max bbox dimension of the geometry entering the stage. The
+  // reference recomputes this in `__updateScaleFactor()` whenever the starting
+  // graph changes -- i.e. once per folding operation, on the already-folded
+  // incoming geometry -- and then holds it for the whole stage because the M/G
+  // matrices are cached. It is not the flat sheet except on the first stage.
+  const scale = options.scale ?? boundingExtent(options.seed ?? model.verticesCoords.map(
+    (v) => [v[0], v[1], 0] as V3,
+  ));
 
   // ---- triangulate every face (ear clipping on the flat polygon) -----------
-  const faceTris: Tri[][] = model.facesVertices.map((loop) => triangulateFace(loop, model.verticesCoords));
+  const faceTris: Tri[][] = model.facesVertices.map((loop) => triangulateFaceDelaunay(loop, model.verticesCoords));
 
   // ---- isometry bars: real edges + triangulation diagonals -----------------
   const edges: EdgeC[] = [];
@@ -349,6 +379,25 @@ export function foldNewton(
     (p) => [p[0], p[1], p[2]] as V3,
   );
 
+  // ---- fold branch state ----------------------------------------------------
+  // The reference keeps a CreaseDihedralConstraint on every manifold edge, so
+  // the branch latch is maintained model-wide, not just on the driven creases.
+  // Edges whose four vertices are all pinned cannot move, and the reference
+  // skips building a constraint for them, so they keep their incoming sign.
+  const branchSigns: FoldBranchSigns = { ...(options.branchSigns ?? {}) };
+  const latchHinges = manifoldHinges(model).filter(
+    (h) => !pinned[h.a] || !pinned[h.b] || !pinned[h.w1] || !pinned[h.w2],
+  );
+  const refreshBranchSigns = (): void => {
+    for (const h of latchHinges) {
+      const n1 = triNormal(x, h.a, h.b, h.w1);
+      const n2 = triNormal(x, h.b, h.a, h.w2);
+      const eHat = norm(sub(x[h.b], x[h.a]));
+      updateBranchSign(branchSigns, h.edge, foldAngle(n1, n2, eHat));
+    }
+  };
+  refreshBranchSigns();
+
   // Gradient stencil of one dihedral: returns {cols[], grads[]} as flat DOF
   // contributions of d(foldAngle)/dx, plus the current signed fold angle.
   type DihEval = { current: number; entries: Array<{ col: number; d: number }> } | null;
@@ -356,7 +405,12 @@ export function foldNewton(
     const n1 = triNormal(x, c.a, c.b, c.w1);
     const n2 = triNormal(x, c.b, c.a, c.w2);
     const eHat = norm(sub(x[c.b], x[c.a]));
-    const current = foldAngle(n1, n2, eHat);
+    // Crease dihedrals read the unwrapped angle (`PEdge.foldAngle3DRadians`);
+    // facet dihedrals (edge < 0) are interior triangulation half-edges with no
+    // pEdge, so the reference reads their plain wrapped angle.
+    const current = c.edge >= 0
+      ? unwrapFoldAngle(foldAngle(n1, n2, eHat), branchSigns[c.edge])
+      : foldAngle(n1, n2, eHat);
     const E0 = leverArm(x, c.w2, c.a, c.b) / scale;
     const F0 = leverArm(x, c.w1, c.a, c.b) / scale;
     if (E0 < 1e-12 || F0 < 1e-12) return { current, entries: [] };
@@ -595,6 +649,10 @@ export function foldNewton(
     }
     lastStepSize = step;
     totalEnergy = cachedEnergy;
+    // The reference invalidates its cached current values on every displacement
+    // and re-derives the latch from them, so the branch state always describes
+    // the configuration the next cycle linearises around.
+    refreshBranchSigns();
 
     energyHistory[historyIndex] = totalEnergy;
     historyIndex = (historyIndex + 1) % ENERGY_HISTORY_MAX_LENGTH;
@@ -638,6 +696,7 @@ export function foldNewton(
     energy: totalEnergy,
     stepSize: lastStepSize,
     stuck,
+    branchSigns,
   };
 }
 
@@ -658,6 +717,13 @@ export function foldNewtonStage(
   let iterations = 0;
   let stageConverged = false;
   const energyHistory: number[] = [];
+  // The scale factor is fixed for the whole stage (the reference caches M/G and
+  // only re-derives them when the starting graph changes), so it is measured
+  // once from the incoming geometry rather than per solver cycle.
+  const scale = options.scale ?? boundingExtent(
+    positions ?? model.verticesCoords.map((v) => [v[0], v[1], 0] as V3),
+  );
+  let branchSigns = options.branchSigns;
 
   while (iterations < cap) {
     result = foldNewton(model, creaseAnglesDeg, {
@@ -667,10 +733,13 @@ export function foldNewtonStage(
       fixedVertexIndices: options.fixedVertexIndices,
       solvedEdgeIndices: options.solvedEdgeIndices,
       initialStepSize: stepSize,
+      branchSigns,
+      scale,
     });
     iterations += 1;
     positions = result.positions;
     stepSize = result.stepSize;
+    branchSigns = result.branchSigns;
     if (!result.stuck) {
       energyHistory.push(result.energy);
       if (energyHistory.length > ENERGY_HISTORY_MAX_LENGTH) energyHistory.shift();
@@ -706,6 +775,8 @@ export function foldNewtonStage(
       fixedVertexIndices: options.fixedVertexIndices,
       solvedEdgeIndices: options.solvedEdgeIndices,
       initialStepSize: stepSize,
+      branchSigns,
+      scale,
     }),
     iterations,
   };
@@ -723,17 +794,28 @@ export function foldNewtonStage(
  */
 export function foldNewtonSequence(
   model: FoldModel,
-  options: { uptoKeyframe?: number; maxIterationsPerStage?: number } = {},
+  options: {
+    uptoKeyframe?: number;
+    maxIterationsPerStage?: number;
+    branchSigns?: FoldBranchSigns;
+  } = {},
 ): NewtonFold {
   const last = options.uptoKeyframe ?? model.keyframes.length - 1;
   const cap = options.maxIterationsPerStage ?? MAX_SOLVER_ITERATIONS;
   let seed: V3[] | undefined;
   let priorTargets: Record<number, number> = {};
+  let branchSigns: FoldBranchSigns = { ...(options.branchSigns ?? {}) };
   let result: NewtonFold | null = null;
   for (let k = 0; k <= last && k < model.keyframes.length; k += 1) {
     const kf = model.keyframes[k];
     const startingPositions = seed ?? model.verticesCoords.map((v) => [v[0], v[1], 0] as V3);
-    const stageAngles = sourceStageConstraintAngles(model, kf, startingPositions, priorTargets);
+    const stageAngles = sourceStageConstraintAngles(
+      model,
+      kf,
+      startingPositions,
+      priorTargets,
+      branchSigns,
+    );
     // Hold this keyframe's fixed faces/vertices rigid (the reference's per-stage
     // fixedFaceIDs) -- e.g. the milk_carton top closure pins the already-folded
     // body so the solve only moves the lid against it instead of letting the
@@ -744,8 +826,11 @@ export function foldNewtonSequence(
       fixedFaceIndices: kf.fixedFaceIndices,
       fixedVertexIndices: kf.fixedVertexIndices,
       solvedEdgeIndices: Object.keys(kf.creaseAnglesDeg).map(Number),
+      branchSigns,
+      scale: boundingExtent(startingPositions),
     });
     seed = result.positions;
+    branchSigns = result.branchSigns;
     priorTargets = appendPriorTargets(priorTargets, kf);
   }
   return (
@@ -759,6 +844,7 @@ export function foldNewtonSequence(
       energy: 0,
       stepSize: ADAPTIVE_STEP_DEFAULT_STEP_SIZE,
       stuck: false,
+      branchSigns,
     }
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createMailerBoxProject } from "./sample";
+import { createMailerBoxProject, createPillowBoxProject } from "./sample";
 import {
   advanceFoldingPlayer,
   createFoldingPlayer,
@@ -69,19 +69,20 @@ describe("PackCAD-style folding replay", () => {
     expect(constraints).toEqual({ 0: 90 });
   });
 
-  it("keeps source branch hints separate from authored UI angles", () => {
+  it("uses authored crease angles verbatim as constraint targets", () => {
     const keyframe = {
       id: "return-fold",
       label: "Return fold",
-      creaseAnglesDeg: { 2: 90, 3: 90 },
-      creaseBranchSigns: { 2: -1 as const },
+      creaseAnglesDeg: { 2: 90, 3: -90 },
       creaseEdgeGroup: { 2: 0, 3: 0 },
       fixedFaceIndices: [],
       fixedVertexIndices: [],
       enforcePriorConstraints: false,
     };
-    expect(keyframe.creaseAnglesDeg).toEqual({ 2: 90, 3: 90 });
-    expect(resolvedKeyframeAngles(keyframe)).toEqual({ 2: -90, 3: 90 });
+    // The reference passes `targetAngleDegrees` straight through; the fold
+    // branch comes from the solver's per-edge latch, never from a rewritten
+    // target, so nothing here may change the number the document authored.
+    expect(resolvedKeyframeAngles(keyframe)).toEqual({ 2: 90, 3: -90 });
   });
 
   it("only keeps an attained prior fold when the source stage enforces it", () => {
@@ -169,6 +170,19 @@ describe("PackCAD-style folding replay", () => {
     expect(updates).toBeLessThanOrEqual(5 * 250);
     expect(player.positions?.flat().every(Number.isFinite)).toBe(true);
     expect(Object.keys(player.priorTargetAngles).length).toBeGreaterThan(0);
+  });
+
+  it("keeps a stopped non-rigid preview on its authored timeline value", () => {
+    const project = createPillowBoxProject();
+    let player = startFoldingPlayer(project, createFoldingPlayer(project));
+    let updates = 0;
+    while (player.playing && updates < 600) {
+      player = advanceFoldingPlayer(project, player, 1000 / 20);
+      updates += 1;
+    }
+    expect(player.finished).toBe(true);
+    expect(player.displayAngle).toBe(105);
+    expect(player.positions?.flat().every(Number.isFinite)).toBe(true);
   });
 
   it("uses only the Newton sequence for paused timeline resolution", () => {

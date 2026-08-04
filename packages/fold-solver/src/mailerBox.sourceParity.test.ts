@@ -15,9 +15,12 @@ describe("live MailerBox source parity", () => {
     const model = createMailerBoxProject().foldModel;
     if (!model) throw new Error("MailerBox fixture did not produce a fold model");
 
-    expect(model.verticesCoords).toHaveLength(74);
+    // Curved edges are flattened into straight pieces at import, as the
+    // reference does, so the mesh is denser than the raw FOLD document.
+    expect(model.verticesCoords).toHaveLength(104);
     expect(model.facesVertices).toHaveLength(19);
-    expect(model.edgeControlPoints?.filter((points) => points.length > 0)).toHaveLength(8);
+    // 8 authored curved edges, flattened into 38 straight pieces.
+    expect(model.edgeControlPoints?.filter((points) => points.length > 0)).toHaveLength(38);
     expect(model.keyframes.map((keyframe) =>
       Object.keys(keyframe.creaseAnglesDeg).length)).toEqual([4, 2, 4, 4, 4]);
     expect(model.keyframes.map((keyframe) =>
@@ -37,7 +40,6 @@ describe("live MailerBox source parity", () => {
       return [Math.min(...values), Math.max(...values)];
     };
 
-    expect(model.keyframes[3].creaseBranchSigns).toEqual({ 0: 1, 11: 1 });
     const [rightReturnMinX] = range(6, 0);
     const [, rightWallMaxX] = range(7, 0);
     expect(rightReturnMinX).toBeLessThan(rightWallMaxX - 1);

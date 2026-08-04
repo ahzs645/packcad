@@ -11,7 +11,7 @@
 // loops (a single vertex surrounded by several creases may leave a small gap).
 
 import type { FoldModel, FoldTransform } from "@packcad/format";
-import { triangulateFace } from "@atelier/geometry";
+import { triangulateFaceDelaunay } from "./faceTriangulation";
 
 export type Vec3 = [number, number, number];
 
@@ -149,7 +149,7 @@ export function foldFaces(model: FoldModel, creaseAnglesDeg: Record<number, numb
     // coords, so non-convex / collinear panels don't get degenerate triangles.
     const local = loop.map((_, i) => i);
     const localCoords = loop.map((vi) => model.verticesCoords[vi]);
-    const triangles = triangulateFace(local, localCoords);
+    const triangles = triangulateFaceDelaunay(local, localCoords);
     return { faceIndex, positions, uv, triangles };
   });
 }
@@ -427,7 +427,7 @@ export function foldWelded(
 
   const triangles: Array<[number, number, number]> = [];
   for (const loop of model.facesVertices) {
-    for (const t of triangulateFace(loop, model.verticesCoords)) triangles.push(t);
+    for (const t of triangulateFaceDelaunay(loop, model.verticesCoords)) triangles.push(t);
   }
   const uv: Array<[number, number]> = model.verticesCoords.map((_, vi) => {
     const t = model.verticesUv[vi];

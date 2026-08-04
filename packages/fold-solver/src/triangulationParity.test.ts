@@ -12,7 +12,7 @@
 import cdt2d from "cdt2d";
 import { triangulateFace as triangulateFaceDelaunator } from "@atelier/geometry";
 import { describe, expect, it } from "vitest";
-import { createMailerBoxProject } from "./sample";
+import { createMailerBoxProject, createPillowBoxProject } from "./sample";
 
 type Tri = [number, number, number];
 
@@ -127,5 +127,19 @@ describe("R2: cdt2d vs delaunator triangulation parity", () => {
         .reduce((sum, t) => sum + signedArea(t, model.verticesCoords), 0);
       expect(nextArea).toBeCloseTo(legacyArea, 6);
     });
+  });
+
+  it("characterizes the source pillow-box triangulation", () => {
+    const pillowModel = createPillowBoxProject().foldModel;
+    if (!pillowModel) throw new Error("PillowBox fixture did not produce a fold model");
+    const mismatches: number[] = [];
+    pillowModel.facesVertices.forEach((loop, faceIndex) => {
+      if (loop.length < 3) return;
+      const legacy = triangleSet(triangulateFaceCdt2d(loop, pillowModel.verticesCoords));
+      const next = triangleSet(triangulateFaceDelaunator(loop, pillowModel.verticesCoords));
+      const same = legacy.size === next.size && [...legacy].every((triangle) => next.has(triangle));
+      if (!same) mismatches.push(faceIndex);
+    });
+    expect(mismatches).toEqual([6, 10, 27, 50, 52, 60, 61, 64]);
   });
 });

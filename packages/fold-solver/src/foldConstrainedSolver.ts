@@ -30,7 +30,8 @@ import {
   signedTargetRadiansFromDeveloped,
 } from "./foldBranch";
 import { foldFaces, nonRigidMessage, type SolveStatus, type Vec3 } from "./foldSolver";
-import { foldNewton } from "./foldNewtonSolver";
+import type { FoldBranchSigns } from "./foldBranchState";
+import { boundingExtent, foldNewton } from "./foldNewtonSolver";
 import {
   appendPriorTargets,
   resolvedKeyframeAngles,
@@ -585,30 +586,43 @@ export type KeyframeSummary = { id: string; label: string; status: SolveStatus; 
 export function summarizeFolds(model: FoldModel): { overall: FoldSummary; keyframes: KeyframeSummary[] } {
   const keyframes: KeyframeSummary[] = [];
   let priorTargets: Record<number, number> = {};
+  let branchSigns: FoldBranchSigns = {};
   let positions: V3[] = model.verticesCoords.map(([x, y]) => [x, y, 0]);
   let last: FoldSummary | null = null;
   for (const kf of model.keyframes) {
-    const constraints = sourceStageConstraintAngles(model, kf, positions, priorTargets);
+    const constraints = sourceStageConstraintAngles(model, kf, positions, priorTargets, branchSigns);
     const solve = foldNewton(model, constraints, {
       maxIterations: 250,
       seed: positions,
       fixedFaceIndices: kf.fixedFaceIndices,
       fixedVertexIndices: kf.fixedVertexIndices,
+      solvedEdgeIndices: Object.keys(kf.creaseAnglesDeg).map(Number),
+      branchSigns,
+      scale: boundingExtent(positions),
     });
-    const solved = solve.isSolved;
+    // The reference's verdict is exactly `OrigamiSimulation.isSolved`: the mesh
+    // is isometric within tolerance AND every authored crease reached its
+    // target. There is no separate seam/contact test to satisfy.
     const summary: FoldSummary = {
-      status: solved ? "Solved" : "Non-Rigid",
-      message: solved ? "" : nonRigidMessage,
-      unresolvedSeams: solved ? 0 : Object.keys(kf.creaseAnglesDeg).length,
+      status: solve.isSolved ? "Solved" : "Non-Rigid",
+      message: solve.isSolved ? "" : nonRigidMessage,
+      unresolvedSeams: solve.isSolved ? 0 : Object.keys(kf.creaseAnglesDeg).length,
       maxStrainPct: Math.round(solve.maxEdgeError * 100),
       maxAngleErrorDeg: solve.maxAngleErrorDeg,
     };
     keyframes.push({ id: kf.id, label: kf.label, status: summary.status, unresolvedSeams: summary.unresolvedSeams });
     last = summary;
     positions = solve.positions;
+    branchSigns = solve.branchSigns;
     priorTargets = appendPriorTargets(priorTargets, kf);
   }
   const overall: FoldSummary =
-    last ?? { status: "Solved", message: "", unresolvedSeams: 0, maxStrainPct: 0, maxAngleErrorDeg: 0 };
+    last ?? {
+      status: "Solved",
+      message: "",
+      unresolvedSeams: 0,
+      maxStrainPct: 0,
+      maxAngleErrorDeg: 0,
+    };
   return { overall, keyframes };
 }

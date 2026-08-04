@@ -16,6 +16,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMailerBoxProject } from "./sample";
+import pillowBoxFixture from "./fixtures/pillowBox.packcad.json";
+import { packCadProjectToProject, type PackCadProjectFile } from "@packcad/format";
 
 const hoisted = vi.hoisted(() => ({ useCdt2d: false, calls: 0 }));
 
@@ -93,5 +95,43 @@ describe("R2: converged fold is unchanged by the triangulation migration", () =>
 
     expect(viaDelaunator.maxEdgeError).toBeLessThan(1e-6);
     expect(viaCdt2d.maxEdgeError).toBeLessThan(1e-6);
+  });
+
+  it("PillowBox exposes source-significant triangulation differences", async () => {
+    const project = packCadProjectToProject(pillowBoxFixture as PackCadProjectFile);
+    if (!project.foldModel) throw new Error("PillowBox fixture did not produce a fold model");
+    const { foldNewtonSequence } = await import("./foldNewtonSolver");
+
+    hoisted.useCdt2d = false;
+    const viaDelaunator = foldNewtonSequence(project.foldModel);
+    hoisted.useCdt2d = true;
+    const viaCdt2d = foldNewtonSequence(project.foldModel);
+    hoisted.useCdt2d = false;
+
+    let maxDelta = 0;
+    for (let index = 0; index < viaDelaunator.positions.length; index += 1) {
+      for (let axis = 0; axis < 3; axis += 1) {
+        maxDelta = Math.max(
+          maxDelta,
+          Math.abs(viaDelaunator.positions[index][axis] - viaCdt2d.positions[index][axis]),
+        );
+      }
+    }
+    // Once curved edges are flattened into pieces, the pillow box's faces carry
+    // near-cocircular quads whose diagonal choice genuinely moves individual
+    // vertices -- this is what the test's name has always claimed. It stays
+    // bounded and, more importantly, the converged package is the same size
+    // either way, so the backend does not change the product.
+    expect(maxDelta).toBeGreaterThan(1e-3);
+    expect(maxDelta).toBeLessThan(5);
+    const extent = (positions: number[][], axis: number) => {
+      const values = positions.map((position) => position[axis]);
+      return Math.max(...values) - Math.min(...values);
+    };
+    for (const axis of [0, 1, 2]) {
+      const a = extent(viaDelaunator.positions, axis);
+      const b = extent(viaCdt2d.positions, axis);
+      expect(Math.abs(a - b) / Math.max(a, b)).toBeLessThan(0.01);
+    }
   });
 });

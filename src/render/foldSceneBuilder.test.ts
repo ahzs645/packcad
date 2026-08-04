@@ -1,5 +1,7 @@
 import {
+  createCurvedBoxProject,
   createMailerBoxProject,
+  createMilkCartonProject,
   solveFoldTimeline,
 } from "@packcad/fold-solver";
 import { BufferAttribute, BufferGeometry } from "three";
@@ -23,6 +25,33 @@ function disposeScene(scene: FoldSceneData): void {
 }
 
 describe("fold scene frame updates", () => {
+  it("ignores stale playback positions while switching between source projects", () => {
+    const milkModel = createMilkCartonProject().foldModel;
+    const curvedProject = createCurvedBoxProject();
+    const curvedModel = curvedProject.foldModel;
+    if (!milkModel || !curvedModel) throw new Error("Source fixtures did not produce fold models");
+    const staleMilkPositions = milkModel.verticesCoords.map(([x, y]) => [x, y, 0] as [number, number, number]);
+
+    const scene = buildFoldScene({
+      model: curvedModel,
+      projection: "folded-3d",
+      foldStepIndex: curvedModel.keyframes.length,
+      foldAngle: 35,
+      thicknessMm: curvedProject.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+      foldPositions: staleMilkPositions,
+    });
+
+    expect(() => updateFoldScenePositions(scene, {
+      foldStepIndex: curvedModel.keyframes.length,
+      foldAngle: 35,
+      foldPositions: staleMilkPositions,
+    })).not.toThrow();
+    expect(scene.geometry.getAttribute("position").count).toBeGreaterThan(0);
+    disposeScene(scene);
+  }, 15_000);
+
   it("uses the source-calibrated Mailer Box shell while excluding selection from locked tint", () => {
     const project = createMailerBoxProject();
     const model = project.foldModel;

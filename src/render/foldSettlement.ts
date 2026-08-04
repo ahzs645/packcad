@@ -39,14 +39,12 @@ export function settledFoldModel(
   const ratio = Math.max(0, Math.min(1, foldAngle / targetMaximum));
   const scaled: FoldKeyframe = {
     ...active,
-    creaseAnglesDeg: {
-      ...Object.fromEntries(
-        Object.entries(active.creaseAnglesDeg).map(([edgeIndex, angle]) => [
-          Number(edgeIndex),
-          angle * ratio,
-        ]),
-      ),
-    },
+    creaseAnglesDeg: Object.fromEntries(
+      Object.entries(active.creaseAnglesDeg).map(([edgeIndex, angle]) => [
+        Number(edgeIndex),
+        angle * ratio,
+      ]),
+    ),
   };
   return {
     ...model,

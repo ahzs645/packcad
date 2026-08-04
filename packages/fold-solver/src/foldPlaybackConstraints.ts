@@ -1,20 +1,14 @@
-import { triangulateFace } from "@atelier/geometry";
 import type { FoldKeyframe, FoldModel } from "@packcad/format";
+import {
+  manifoldHinges,
+  unwrapFoldAngle,
+  type FoldBranchSigns,
+} from "./foldBranchState";
 import type { Vec3 } from "./foldSolver";
 
 const PRIOR_ANGLE_TOLERANCE_RADIANS = 0.01;
 
 type FaceGraphLink = { face: number; edge: number };
-
-function edgeTraversal(loop: number[], a: number, b: number): number {
-  for (let index = 0; index < loop.length; index += 1) {
-    const u = loop[index];
-    const v = loop[(index + 1) % loop.length];
-    if (u === a && v === b) return 1;
-    if (u === b && v === a) return -1;
-  }
-  return 0;
-}
 
 function subtract(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -99,38 +93,30 @@ export function findCreaseEdgeBiconnectedComponents(model: FoldModel): number[][
   return components;
 }
 
-/** Signed current dihedral angles in the same face/edge orientation as the solver. */
+/**
+ * Signed current dihedral angles in the same face/edge orientation as the
+ * solver, lifted onto each edge's latched fold branch. This is the reference's
+ * `PEdge.foldAngle3DDegrees`, so values may fall outside (-180, 180] for creases
+ * that have folded past flat-back -- which is exactly what keeps a "hold this
+ * component where it is" constraint from mirroring the panel it holds.
+ */
 export function measureCreaseAnglesDegrees(
   model: FoldModel,
   positions: Vec3[],
+  branchSigns: FoldBranchSigns = {},
 ): Record<number, number> {
-  const triangles = model.facesVertices.map((loop) => triangulateFace(loop, model.verticesCoords));
   const measured: Record<number, number> = {};
-
-  model.edgeFaces.forEach((faces, edge) => {
-    if (faces.length !== 2) return;
-    const [a, b] = model.edgesVertices[edge];
-    let [firstFace, secondFace] = faces;
-    if (
-      edgeTraversal(model.facesVertices[firstFace], a, b) !== 1 &&
-      edgeTraversal(model.facesVertices[secondFace], a, b) === 1
-    ) {
-      [firstFace, secondFace] = [secondFace, firstFace];
-    }
-    const firstTriangle = triangles[firstFace].find((triangle) => triangle.includes(a) && triangle.includes(b));
-    const secondTriangle = triangles[secondFace].find((triangle) => triangle.includes(a) && triangle.includes(b));
-    if (!firstTriangle || !secondTriangle) return;
-    const firstApex = firstTriangle.find((vertex) => vertex !== a && vertex !== b);
-    const secondApex = secondTriangle.find((vertex) => vertex !== a && vertex !== b);
-    if (firstApex === undefined || secondApex === undefined) return;
-    const firstNormal = triangleNormal(positions, a, b, firstApex);
-    const secondNormal = triangleNormal(positions, b, a, secondApex);
+  for (const hinge of manifoldHinges(model)) {
+    const { edge, a, b, w1, w2 } = hinge;
+    const firstNormal = triangleNormal(positions, a, b, w1);
+    const secondNormal = triangleNormal(positions, b, a, w2);
     const edgeDirection = normalize(subtract(positions[b], positions[a]));
-    measured[edge] = Math.atan2(
+    const wrapped = Math.atan2(
       dot(cross(firstNormal, secondNormal), edgeDirection),
       dot(firstNormal, secondNormal),
-    ) * 180 / Math.PI;
-  });
+    );
+    measured[edge] = unwrapFoldAngle(wrapped, branchSigns[edge]) * 180 / Math.PI;
+  }
   return measured;
 }
 
@@ -138,20 +124,16 @@ function isNearPrior(currentDegrees: number, priorDegrees: number): boolean {
   return Math.abs((currentDegrees - priorDegrees) * Math.PI / 180) <= PRIOR_ANGLE_TOLERANCE_RADIANS;
 }
 
-/** Resolve authored UI angles onto the source playback branch. */
+/**
+ * A keyframe's authored crease targets. The reference feeds
+ * `foldingEdgeGroups[].targetAngleDegrees` straight to
+ * `CreaseDihedralConstraint.activateConstraint`, so the authored number is the
+ * target -- the branch is decided by the solver's per-edge latch, not here.
+ */
 export function resolvedKeyframeAngles(
   keyframe: FoldKeyframe,
 ): Record<number, number> {
-  return Object.fromEntries(
-    Object.entries(keyframe.creaseAnglesDeg).map(([edgeKey, angle]) => {
-      const edge = Number(edgeKey);
-      // Legacy PackCAD operations encode the branch directly in the authored
-      // target angle. Newer fixtures can override it with creaseBranchSigns,
-      // but an absent override must not erase a negative legacy target.
-      const sign = keyframe.creaseBranchSigns?.[edge] ?? (angle < 0 ? -1 : 1);
-      return [edge, Math.abs(angle) * sign];
-    }),
-  );
+  return { ...keyframe.creaseAnglesDeg };
 }
 
 /** Reproduce OrigamiSimulation.__updateMergedConstraints from the source app.
@@ -165,8 +147,9 @@ export function sourceStageConstraintAngles(
   keyframe: FoldKeyframe,
   positions: Vec3[],
   priorTargets: Record<number, number>,
+  branchSigns: FoldBranchSigns = {},
 ): Record<number, number> {
-  const measured = measureCreaseAnglesDegrees(model, positions);
+  const measured = measureCreaseAnglesDegrees(model, positions, branchSigns);
   const merged: Record<number, number> = {};
 
   if (keyframe.enforcePriorConstraints) {

@@ -3,3 +3,12 @@ dist/
 coverage/
 *.tsbuildinfo
 .DS_Store
+
+# Diagnostic captures: side-by-side screenshots and rendered fold figures used
+# while comparing against the reference app. Reproducible from the fixtures, and
+# large (~64 MB), so the images stay local. The scripts that build them are
+# source and are kept -- git cannot re-include a file whose parent directory is
+# excluded, so ignore the files and leave the directories traversable.
+artifacts/**
+!artifacts/**/
+!artifacts/**/*.swift

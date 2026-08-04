@@ -1,4 +1,5 @@
-import { foldNewton } from "./foldNewtonSolver";
+import type { FoldBranchSigns } from "./foldBranchState";
+import { boundingExtent, foldNewton } from "./foldNewtonSolver";
 import {
   appendPriorTargets,
   measureCreaseAnglesDegrees,
@@ -22,6 +23,12 @@ export type FoldingPlayerState = {
   solverAccumulatorMs: number;
   energyHistory: number[];
   priorTargetAngles: Record<number, number>;
+  /** Persistent per-edge fold branch, carried across cycles and stages exactly
+   *  as the reference carries `preferredFoldAngle3DSign` on its graph. */
+  branchSigns: FoldBranchSigns;
+  /** `__updateScaleFactor()` for the stage in flight: measured once from the
+   *  geometry entering the stage, then held while it solves. */
+  stageScale: number | null;
   solverStepSize: number;
   solverMaxEdgeError: number;
   solverMaxAngleErrorDeg: number;
@@ -106,6 +113,8 @@ function freshSourceReplay(project: PackagingProject, base: FoldingPlayerState):
     positions: flatPositions(project),
     stageConstraintAngles: null,
     stageIterations: 0,
+    stageScale: null,
+    branchSigns: {},
     solverAccumulatorMs: 0,
     energyHistory: [],
     priorTargetAngles: {},
@@ -138,6 +147,8 @@ export function createFoldingPlayer(
     positions: null,
     stageConstraintAngles: null,
     stageIterations: 0,
+    stageScale: null,
+    branchSigns: {},
     solverAccumulatorMs: 0,
     energyHistory: [],
     priorTargetAngles: {},
@@ -198,11 +209,12 @@ function averageActiveAngle(
   project: PackagingProject,
   stepIndex: number,
   positions: Vec3[],
+  branchSigns: FoldBranchSigns,
 ): number {
   const model = project.foldModel;
   const keyframe = model?.keyframes[stepIndex - 1];
   if (!model || !keyframe) return 0;
-  const measured = measureCreaseAnglesDegrees(model, positions);
+  const measured = measureCreaseAnglesDegrees(model, positions, branchSigns);
   const activeEdges = Object.keys(resolvedKeyframeAngles(keyframe)).map(Number);
   if (activeEdges.length === 0) return 0;
   return activeEdges.reduce(
@@ -227,7 +239,12 @@ function advanceSourceReplayStep(
     keyframe,
     positions,
     player.priorTargetAngles,
+    player.branchSigns,
   );
+  // Measured once when the stage starts (alongside its constraint angles) and
+  // then held, so the whole stage solves at one scale like the reference's
+  // cached M/G matrices.
+  const stageScale = player.stageScale ?? boundingExtent(positions);
   const result = foldNewton(model, stageConstraintAngles, {
     maxIterations: 1,
     seed: positions,
@@ -235,12 +252,14 @@ function advanceSourceReplayStep(
     fixedVertexIndices: keyframe.fixedVertexIndices,
     solvedEdgeIndices: Object.keys(keyframe.creaseAnglesDeg).map(Number),
     initialStepSize: player.solverStepSize,
+    branchSigns: player.branchSigns,
+    scale: stageScale,
   });
   const stageIterations = player.stageIterations + 1;
   const energyHistory = result.stuck
     ? player.energyHistory
     : [...player.energyHistory, result.energy].slice(-ENERGY_HISTORY_MAX_LENGTH);
-  const displayAngle = averageActiveAngle(project, stepIndex, result.positions);
+  const displayAngle = averageActiveAngle(project, stepIndex, result.positions, result.branchSigns);
   const step = project.foldingSteps[stepIndex];
   const targetAngle = step ? player.targetAngles[step.id] ?? step.angle : 0;
   const progress = targetAngle > 0 ? clamp(Math.abs(displayAngle) / Math.abs(targetAngle), 0, 1) : 0;
@@ -261,6 +280,8 @@ function advanceSourceReplayStep(
     positions: result.positions,
     stageConstraintAngles,
     stageIterations,
+    stageScale,
+    branchSigns: result.branchSigns,
     solverAccumulatorMs: player.solverAccumulatorMs,
     energyHistory,
     solverStepSize: result.stepSize,
@@ -279,6 +300,11 @@ function advanceSourceReplayStep(
       ...common,
       playing: false,
       progress: 1,
+      // A captured non-rigid preview may stop before the authored creases are
+      // attained. Keep the timeline label on the authored keyframe value (the
+      // source inspector still shows 105/89) while positions preserve the
+      // actual stopped geometry.
+      displayAngle: targetAngle,
       priorTargetAngles,
       finished: true,
     };
@@ -289,6 +315,8 @@ function advanceSourceReplayStep(
     progress: 0,
     stageConstraintAngles: null,
     stageIterations: 0,
+    // Re-measured for the next stage from its own incoming geometry.
+    stageScale: null,
     solverAccumulatorMs: player.solverAccumulatorMs,
     energyHistory: [],
     priorTargetAngles,

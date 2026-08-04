@@ -16,6 +16,7 @@ import type {
   ParsedFold,
   RotateAxisAngleOperation,
 } from "./packcadProject";
+import { subdivideCurvedEdges } from "./curveSubdivision";
 import { buildFoldFromSvg } from "./svgFold";
 
 // A 3D transform from the operation pipeline (OPERATION_TRANSFORM_3D_*).
@@ -27,15 +28,11 @@ export type FoldTransform =
 export type FoldKeyframe = {
   id: string;
   label: string;
-  /** Crease angles introduced *by this keyframe*, keyed by FOLD edge index. */
+  /** Crease angles introduced *by this keyframe*, keyed by FOLD edge index.
+   *  Used verbatim as the constraint target, exactly as the reference does with
+   *  `foldingEdgeGroups[].targetAngleDegrees`. The fold branch is not encoded
+   *  here -- it comes from the solver's per-edge branch state. */
   creaseAnglesDeg: Record<number, number>;
-  /**
-   * Optional per-crease branch chosen by the source simulation. PackCAD stores
-   * an unsigned UI angle for ambiguous flat hinges; this preserves the branch
-   * observed during source playback without changing the authored angle shown
-   * in the editor. Missing entries default to +1.
-   */
-  creaseBranchSigns?: Record<number, -1 | 1>;
   /** FOLD edge index -> index of the operation's foldingEdgeGroup that drives it.
    *  Lets the editor map a clicked crease back to the constraint it belongs to. */
   creaseEdgeGroup: Record<number, number>;
@@ -277,7 +274,12 @@ export function buildFoldModel(design: PackCadDesign): FoldModel | null {
     };
   });
 
-  return {
+  // The reference's importer flattens every curved edge into straight pieces
+  // before it builds the graph, so a curved crease carries interior vertices
+  // that the solver can move. Folding the raw chords instead makes the mesh
+  // stiffer and lets the solver drive curved creases past where the reference
+  // can take them.
+  return subdivideCurvedEdges({
     verticesCoords: fold.vertices_coords.map((v) => v.slice()),
     coordinateUnit: fold.frame_unit ?? importOp?.preferredUnits ?? design.units,
     verticesUv: (fold.vertices_uv ?? []).map((v) => v.slice()),
@@ -300,7 +302,7 @@ export function buildFoldModel(design: PackCadDesign): FoldModel | null {
           rotationDegrees: design.modifiers.OPERATION_THICKNESS.materialRotationDegrees ?? 0,
         }
       : null,
-  };
+  });
 }
 
 /** Total number of resolved crease folds across all keyframes (diagnostics). */

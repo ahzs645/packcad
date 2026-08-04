@@ -4,10 +4,7 @@ import {
   type EdgeColorMode,
   type PanelColorMode,
 } from "../render/foldViewSettings";
-import {
-  getEnabledSourceArtwork,
-  type PackagingProject,
-} from "@packcad/format";
+import type { PackagingProject } from "@packcad/format";
 
 export type ViewLayout =
   | "split-horizontal"
@@ -55,25 +52,42 @@ export const defaultUiPreferences: UiPreferences = {
   offsetDirection: "bottom",
 };
 
-/** The bundled live-site example owns its initial presentation. Applying these
- * settings at document load prevents unrelated preferences left by another
- * project from changing the example's material, camera, or render appearance.
- * The normal preference controls remain editable after the document is open.
+const offsetDirectionFromDocument: Record<string, UiPreferences["offsetDirection"]> = {
+  THICKNESS_OFFSET_DIRECTION_FRONT: "top",
+  THICKNESS_OFFSET_DIRECTION_BACK: "bottom",
+  THICKNESS_OFFSET_DIRECTION_BOTH: "center",
+};
+
+/**
+ * A document brings its own material settings; the viewer keeps their own view
+ * settings. Units, board, grain angle, and offset direction are authored in the
+ * PackCAD file's `OPERATION_THICKNESS` modifier, so they are read from whatever
+ * document is being opened. Everything else (theme, layout, camera, ground
+ * plane, ...) is a viewer preference and survives the load untouched.
+ *
+ * No document is recognised by name, artwork, or vertex count -- opening a file
+ * and opening the same design from the sample library must behave identically.
  */
 export function preferencesForLoadedProject(
   project: PackagingProject,
   preferences: UiPreferences,
 ): UiPreferences {
-  const sourceArtwork = getEnabledSourceArtwork(project.design);
-  const isLiveMailerBoxExample = project.design?.name === "MailerBox"
-    && sourceArtwork?.frontArtworkFilename === "MailerBox-exterior.png"
-    && sourceArtwork?.backArtworkFilename === "MailerBox-interior.png"
-    && project.foldModel?.verticesCoords.length === 74
-    && project.foldModel.facesVertices.length === 19;
+  const design = project.design;
+  if (!design) return preferences;
+  const thickness = design.modifiers?.OPERATION_THICKNESS;
+  const next: UiPreferences = { ...preferences };
 
-  return isLiveMailerBoxExample
-    ? { ...defaultUiPreferences }
-    : preferences;
+  if (design.units === "mm" || design.units === "in") next.units = design.units;
+  if (thickness?.enabled) {
+    const offset = offsetDirectionFromDocument[thickness.thicknessOffsetDirection];
+    if (offset) next.offsetDirection = offset;
+    if (Number.isFinite(thickness.materialRotationDegrees)) {
+      next.fluteAngle = thickness.materialRotationDegrees;
+    }
+    const flute = /_([A-Z])_FLUTE$/.exec(thickness.materialSubType ?? "")?.[1];
+    if (flute) next.fluteSize = `${flute} Flute`;
+  }
+  return next;
 }
 
 export function normalizeUiPreferences(

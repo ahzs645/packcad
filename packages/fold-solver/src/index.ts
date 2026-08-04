@@ -3,6 +3,8 @@ export * from "./foldNewtonSolver";
 export * from "./foldConstrainedSolver";
 export * from "./foldTimelineSolver";
 export * from "./foldBranch";
+export * from "./faceTriangulation";
+export * from "./foldBranchState";
 export * from "./foldPlaybackConstraints";
 export * from "./foldingPlayer";
 export * from "./foldThickness";

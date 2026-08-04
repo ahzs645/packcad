@@ -451,7 +451,11 @@ export function SourceSidebar({
                         : "step-status non-rigid"
                     }
                     aria-label={stepStatus.status}
-                  />
+                  >
+                    {stepStatus.status === "Non-Rigid" ? (
+                      <Icon name="triangle" size={12} />
+                    ) : null}
+                  </span>
                 ) : null}
                 <strong>
                   {Math.round(

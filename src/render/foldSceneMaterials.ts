@@ -51,7 +51,10 @@ export function createFoldSceneMaterials({
   edgeFallbackColor,
 }: FoldSceneMaterialOptions): FoldSceneMaterialLayers {
   const baseFrontMaterial = new MeshStandardMaterial({
-    color: new Color(technical ? "#f1f1f1" : "#ffffff"),
+    // The bitmap supplies fibre detail; the selected stock colour supplies the
+    // material tint. Multiplying textured faces by white washed chipboard and
+    // corrugated stock out compared with the source renderer.
+    color: new Color(technical ? "#f1f1f1" : edgeFallbackColor),
     map: technical || useFaceColors ? null : faceTexture,
     roughness: technical ? 0.96 : 0.9,
     metalness: 0,

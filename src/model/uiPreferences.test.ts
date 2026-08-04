@@ -41,7 +41,7 @@ describe("PackCAD UI preferences", () => {
     }).fluteSize).toBe("B Flute");
   });
 
-  it("loads the bundled example consistently despite unrelated saved settings", () => {
+  it("takes material settings from the opened document and leaves view settings alone", () => {
     const mismatched: typeof defaultUiPreferences = {
       ...defaultUiPreferences,
       units: "mm",
@@ -57,12 +57,27 @@ describe("PackCAD UI preferences", () => {
       offsetDirection: "top",
     };
 
-    expect(preferencesForLoadedProject(
-      createMailerBoxProject(),
-      mismatched,
-    )).toEqual(defaultUiPreferences);
-    expect(preferencesForLoadedProject(createProject(), mismatched)).toBe(
-      mismatched,
+    const applied = preferencesForLoadedProject(createMailerBoxProject(), mismatched);
+    const thickness = createMailerBoxProject().design?.modifiers.OPERATION_THICKNESS;
+    // Authored by the document.
+    expect(applied.units).toBe("in");
+    expect(applied.fluteAngle).toBe(thickness?.materialRotationDegrees);
+    expect(applied.offsetDirection).not.toBe("top");
+    // The viewer's own view settings survive opening a document.
+    expect(applied).toMatchObject({
+      panelColorMode: "material",
+      edgeColorMode: "hidden",
+      groundPlane: false,
+      shadow: false,
+      origin: false,
+      backgroundColor: "#101010",
+      cameraType: "perspective",
+    });
+  });
+
+  it("leaves preferences untouched for a project with no design", () => {
+    expect(preferencesForLoadedProject(createProject(), defaultUiPreferences)).toBe(
+      defaultUiPreferences,
     );
   });
 });

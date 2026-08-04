@@ -1,5 +1,6 @@
 import type { FoldKeyframe, FoldModel } from "@packcad/format";
-import { foldNewtonStage } from "./foldNewtonSolver";
+import type { FoldBranchSigns } from "./foldBranchState";
+import { boundingExtent, foldNewtonStage } from "./foldNewtonSolver";
 import {
   appendPriorTargets,
   sourceStageConstraintAngles,
@@ -76,6 +77,7 @@ export function solveFoldTimeline(
 
   let positions = flatPositions(model);
   let priorTargets: Record<number, number> = {};
+  let branchSigns: FoldBranchSigns = {};
   let creaseAnglesDeg: Record<number, number> = {};
   let maxEdgeError = 0;
   let maxAngleErrorDeg = 0;
@@ -87,15 +89,24 @@ export function solveFoldTimeline(
     const keyframe = index === activeKeyframe && ratio < 0.999
       ? scaledKeyframe(original, ratio)
       : original;
-    creaseAnglesDeg = sourceStageConstraintAngles(model, keyframe, positions, priorTargets);
+    creaseAnglesDeg = sourceStageConstraintAngles(
+      model,
+      keyframe,
+      positions,
+      priorTargets,
+      branchSigns,
+    );
     const solved = foldNewtonStage(model, creaseAnglesDeg, {
       maxIterations: MAX_SOLVER_ITERATIONS,
       seed: positions,
       fixedFaceIndices: keyframe.fixedFaceIndices,
       fixedVertexIndices: keyframe.fixedVertexIndices,
       solvedEdgeIndices: Object.keys(keyframe.creaseAnglesDeg).map(Number),
+      branchSigns,
+      scale: boundingExtent(positions),
     });
     positions = solved.positions;
+    branchSigns = solved.branchSigns;
     maxEdgeError = solved.maxEdgeError;
     maxAngleErrorDeg = solved.maxAngleErrorDeg;
     if (index < activeKeyframe || ratio >= 0.999) {

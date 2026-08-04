@@ -1,4 +1,5 @@
 import {
+  ACESFilmicToneMapping,
   AxesHelper,
   Box3,
   BufferGeometry,
@@ -14,11 +15,11 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
-  NoToneMapping,
   Points,
   PointsMaterial,
   RepeatWrapping,
   SRGBColorSpace,
+  ShadowMaterial,
   TextureLoader,
   type ColorRepresentation,
   type DepthModes,
@@ -140,6 +141,40 @@ function createLockedPanelTexture(): CanvasTexture {
   context.stroke();
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createOrientationTagTexture(label: "exterior" | "interior"): CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 1024;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = label === "exterior"
+      ? "rgba(48, 45, 42, 0.72)"
+      : "rgba(75, 68, 61, 0.68)";
+    context.font = "700 36px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    const placements = [
+      [0.2, 0.24, -0.12],
+      [0.69, 0.2, 0.08],
+      [0.32, 0.7, -0.16],
+      [0.8, 0.73, 0.12],
+    ] as const;
+    for (const [x, y, rotation] of placements) {
+      context.save();
+      context.translate(canvas.width * x, canvas.height * y);
+      context.rotate(rotation);
+      context.fillText(label, 0, 0);
+      context.restore();
+    }
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.premultiplyAlpha = true;
   texture.needsUpdate = true;
   return texture;
 }
@@ -320,7 +355,7 @@ export function ViewportPane({
   showGroundPlane = project.showHelpers,
   showOrigin = project.showHelpers,
   showShadow = true,
-  backgroundColor = viewMode === "2d" ? "#f2f2f3" : "#ffffff",
+  backgroundColor = viewMode === "2d" ? "#f2f2f3" : "#f7f7f7",
   compact = false,
   interactive = true,
   fitNonce = 0,
@@ -344,6 +379,11 @@ export function ViewportPane({
     model: PackagingProject["foldModel"];
     viewMode: PackagingProject["viewMode"];
   } | null>(null);
+  const settledAutoFitRef = useRef<{
+    model: PackagingProject["foldModel"];
+    sawPlayback: boolean;
+    fitted: boolean;
+  } | null>(null);
   const onSelectFaceRef = useRef(onSelectFace);
   onSelectFaceRef.current = onSelectFace;
   const onSelectFoldEdgeRef = useRef(onSelectFoldEdge);
@@ -356,8 +396,8 @@ export function ViewportPane({
   hoveredFoldEdgeIndexRef.current = hoveredFoldEdgeIndex;
 
   const handleReady = useCallback((readyViewport: Viewport): void => {
-    readyViewport.renderer.toneMapping = NoToneMapping;
-    readyViewport.renderer.toneMappingExposure = 1;
+    readyViewport.renderer.toneMapping = ACESFilmicToneMapping;
+    readyViewport.renderer.toneMappingExposure = 0.9;
     setViewport(readyViewport);
   }, []);
 
@@ -460,6 +500,25 @@ export function ViewportPane({
   }, [fluteAngle, project.material, project.materialSpec, viewport]);
 
   const artworkSources = artworkImageSources(project);
+  const orientationFrontTexture = useMemo(
+    () => artworkSources.front || artworkSources.back
+      ? null
+      : createOrientationTagTexture("interior"),
+    [artworkSources.back, artworkSources.front],
+  );
+  const orientationBackTexture = useMemo(
+    () => artworkSources.front || artworkSources.back
+      ? null
+      : createOrientationTagTexture("exterior"),
+    [artworkSources.back, artworkSources.front],
+  );
+  useEffect(
+    () => () => {
+      orientationFrontTexture?.dispose();
+      orientationBackTexture?.dispose();
+    },
+    [orientationBackTexture, orientationFrontTexture],
+  );
   useEffect(() => {
     if (!viewport || !artworkSources.front) {
       setFrontArtworkTexture(null);
@@ -501,18 +560,22 @@ export function ViewportPane({
   }, [artworkSources.back, viewport]);
 
   const placedFrontArtworkTexture = useMemo(() => {
-    if (!frontArtworkTexture) return null;
-    const texture = configureArtworkTexture(frontArtworkTexture.clone());
-    applyArtworkPlacement(texture, project.artwork, viewMode === "2d");
-    return texture;
-  }, [frontArtworkTexture, project.artwork, viewMode]);
-  const placedBackArtworkTexture = useMemo(() => {
-    const source = backArtworkTexture ?? frontArtworkTexture;
+    const source = frontArtworkTexture ?? orientationFrontTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    applyArtworkPlacement(texture, project.artwork, true);
+    applyArtworkPlacement(texture, project.artwork, viewMode === "2d");
     return texture;
-  }, [backArtworkTexture, frontArtworkTexture, project.artwork]);
+  }, [frontArtworkTexture, orientationFrontTexture, project.artwork, viewMode]);
+  const placedBackArtworkTexture = useMemo(() => {
+    const source = backArtworkTexture
+      ?? frontArtworkTexture
+      ?? orientationBackTexture
+      ?? orientationFrontTexture;
+    if (!source) return null;
+    const texture = configureArtworkTexture(source.clone());
+    applyArtworkPlacement(texture, project.artwork, Boolean(backArtworkTexture || frontArtworkTexture));
+    return texture;
+  }, [backArtworkTexture, frontArtworkTexture, orientationBackTexture, orientationFrontTexture, project.artwork]);
   useEffect(
     () => () => {
       placedFrontArtworkTexture?.dispose();
@@ -557,18 +620,37 @@ export function ViewportPane({
     const showSceneHelpers = showGroundPlane && viewMode === "3d";
     viewport.lighting.setGround(showSceneHelpers
       ? {
-          grid: true,
+          grid: false,
           shadowCatcher: showShadow,
-          size: 8,
+          size: 12,
         }
       : null);
     const helpers: Array<AxesHelper | GridHelper> = [];
-    if (showGroundPlane && viewMode === "2d") {
-      const grid = new GridHelper(8, 40, "#d7d7d7", "#ececec");
+    if (showGroundPlane) {
+      const grid = new GridHelper(
+        viewMode === "3d" ? 12 : 8,
+        viewMode === "3d" ? 120 : 80,
+        "#c9cdd2",
+        "#d8dce0",
+      );
       grid.position.y = -0.01;
+      grid.renderOrder = -2;
+      for (const material of Array.isArray(grid.material) ? grid.material : [grid.material]) {
+        material.transparent = true;
+        material.opacity = viewMode === "3d" ? 0.82 : 0.58;
+        material.depthWrite = false;
+        material.toneMapped = false;
+      }
       viewport.scene.add(grid);
       helpers.push(grid);
     }
+    viewport.scene.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      const sceneMaterials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of sceneMaterials) {
+        if (material instanceof ShadowMaterial) material.opacity = 0.055;
+      }
+    });
     if (showOrigin) {
       const axes = new AxesHelper(0.75);
       axes.position.set(-2, 0.002, -2);
@@ -588,16 +670,22 @@ export function ViewportPane({
 
   useEffect(() => {
     if (!viewport) return;
-    viewport.lighting.setPreset(
-      project.renderMode === "technical"
-        ? "technical"
-        : viewMode === "2d" ? "flat" : "studio",
-    );
+    if (project.renderMode === "technical") {
+      viewport.lighting.setPreset("technical");
+    } else if (viewMode === "2d") {
+      viewport.lighting.setPreset("flat");
+    } else {
+      viewport.lighting.setLights([
+        { position: [4, 10, 7], color: "#ffffff", intensity: 1.05, castShadow: true },
+        { position: [-5, 6, -4], color: "#fff4df", intensity: 0.42 },
+        { position: [1, 4, -8], color: "#e8eef8", intensity: 0.28 },
+      ]);
+    }
     viewport.lighting.setBackground(backgroundColor);
     viewport.lighting.setShadows(showShadow && viewMode === "3d");
     viewport.post.setEnabled(FOLD_SCENE_POST_PROCESSING);
     if (project.renderMode === "solid" && viewMode === "3d") {
-      void viewport.lighting.setEnvironment("room", 0.55);
+      void viewport.lighting.setEnvironment("room", 0.46);
     } else {
       viewport.lighting.clearEnvironment();
     }
@@ -633,14 +721,37 @@ export function ViewportPane({
         : data.positionsByEdge.get(hoveredFoldEdgeIndexRef.current),
     );
     viewport.invalidate();
+    // Source projects normally open on their final keyframe. The scene group is
+    // first created from the flat fallback while the worker settles that fold,
+    // so the initial group-level fit can leave the finished package extremely
+    // small. Reframe once when this model's first settled state arrives; never
+    // refit continuously while the user plays or scrubs the simulation.
+    let settledAutoFit = settledAutoFitRef.current;
+    if (!settledAutoFit || settledAutoFit.model !== model) {
+      settledAutoFit = { model, sawPlayback: false, fitted: false };
+      settledAutoFitRef.current = settledAutoFit;
+    }
+    if (foldPlayback.playing) settledAutoFit.sawPlayback = true;
+    if (
+      !settledAutoFit.fitted
+      && settledAutoFit.sawPlayback
+      && !foldPlayback.playing
+      && (settlement?.positions || foldPlayback.positions)
+    ) {
+      settledAutoFit.fitted = true;
+      fitToView();
+    }
   }, [
+    fitToView,
     foldAngle,
+    foldPlayback.playing,
     foldPlayback.positions,
     foldPlayback.solverMaxAngleErrorDeg,
     foldPlayback.solverMaxEdgeError,
     settlement?.maxAngleErrorDeg,
     settlement?.maxEdgeError,
     settlement?.positions,
+    model,
     viewMode,
     viewport,
   ]);

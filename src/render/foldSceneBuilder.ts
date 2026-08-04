@@ -336,9 +336,15 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // --- positions: folded (3D) or flat (2D) ----------------------------------
   // The fold edge KIND (and thus the locked highlight) always tracks the active
   // fold step; only the vertex positions differ by projection.
-  const timelineSolve: FoldTimelineSolve = input.foldPositions
+  // Project replacement and worker completion happen on different React
+  // frames. Ignore a stale position buffer from the previous project instead
+  // of indexing it with the new model's vertex IDs.
+  const suppliedFoldPositions = input.foldPositions?.length === model.verticesCoords.length
+    ? input.foldPositions
+    : undefined;
+  const timelineSolve: FoldTimelineSolve = suppliedFoldPositions
     ? {
-        positions: input.foldPositions,
+        positions: suppliedFoldPositions,
         creaseAnglesDeg: {},
         ratio: 0,
         method: "source-iterative",
@@ -1292,9 +1298,12 @@ export function updateFoldScenePositions(
   input: FoldScenePositionInput,
 ): void {
   const { model, projection, frame } = data.positionLayout;
-  const timelineSolve: FoldTimelineSolve = input.foldPositions
+  const suppliedFoldPositions = input.foldPositions?.length === model.verticesCoords.length
+    ? input.foldPositions
+    : undefined;
+  const timelineSolve: FoldTimelineSolve = suppliedFoldPositions
     ? {
-        positions: input.foldPositions,
+        positions: suppliedFoldPositions,
         creaseAnglesDeg: {},
         ratio: 0,
         method: "source-iterative",
