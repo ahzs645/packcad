@@ -1,4 +1,5 @@
 import type { CameraState } from "@atelier/viewport";
+import { Vector3, type Camera } from "three";
 
 // PackCAD starts its 3D camera at (100, -100, 100), with Z up, while its graph
 // visualization is scaled by (1, -1, 1). Atelier stores that same graph as
@@ -22,4 +23,18 @@ export function sourceIsometricCameraState(state: CameraState): CameraState {
     ],
     fov: SOURCE_PERSPECTIVE_FOV,
   };
+}
+
+export type SourceCameraLightBasis = {
+  forward: Vector3;
+  right: Vector3;
+  up: Vector3;
+};
+
+/** Match PackCAD's camera-relative light basis without inheriting camera roll. */
+export function sourceCameraLightBasis(camera: Camera): SourceCameraLightBasis {
+  const forward = camera.getWorldDirection(new Vector3()).normalize();
+  const up = camera.up.clone().normalize();
+  const right = forward.clone().cross(up).normalize();
+  return { forward, right, up };
 }

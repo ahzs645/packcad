@@ -1,10 +1,33 @@
 import type { FoldModel } from "@packcad/format";
+import {
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  RepeatWrapping,
+  SRGBColorSpace,
+  type Texture,
+} from "three";
 
 const SVG_POINTS_PER_INCH = 72;
 const PAPERBOARD_TILE_SIZE_IN = 2;
 const CORRUGATED_TEXTURE_FLUTES = 20;
 const DEFAULT_CORRUGATED_FLUTES_PER_IN = 7.5;
 const FALLBACK_REPEAT = 2;
+
+/**
+ * PackCAD keeps stock bitmaps on TextureLoader's mipmapped sampling path.
+ * Treating them like artwork (plain LinearFilter) makes the repeated paper
+ * fibres alias and appear to swim as an oblique face moves across the screen.
+ */
+export function configureMaterialTexture(texture: Texture): Texture {
+  texture.colorSpace = SRGBColorSpace;
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 function foldUnitsPerInch(coordinateUnit: string): number {
   switch (coordinateUnit.toLowerCase()) {
@@ -73,4 +96,3 @@ export function materialTextureRepeat(
     axisRepeat(model, 1, tileSizeIn),
   ];
 }
-

@@ -20,11 +20,9 @@ import {
   NoToneMapping,
   Points,
   PointsMaterial,
-  RepeatWrapping,
   SRGBColorSpace,
   ShadowMaterial,
   TextureLoader,
-  Vector3,
   type ColorRepresentation,
   type DepthModes,
   type Object3D,
@@ -86,8 +84,14 @@ import {
   type FoldStepFrame,
   type SettledFoldStepAutoFit,
 } from "../render/foldStepAutoFit";
-import { sourceIsometricCameraState } from "../render/sourceCamera";
-import { materialTextureRepeat } from "../render/materialTexture";
+import {
+  sourceCameraLightBasis,
+  sourceIsometricCameraState,
+} from "../render/sourceCamera";
+import {
+  configureMaterialTexture,
+  materialTextureRepeat,
+} from "../render/materialTexture";
 
 const SOURCE_3D_CUT_LINE_WIDTH = 1.5;
 const SOURCE_3D_CREASE_LINE_WIDTH = 1;
@@ -424,9 +428,7 @@ export function ViewportPane({
         viewport.invalidate();
       }
     });
-    configureArtworkTexture(texture);
-    texture.wrapS = RepeatWrapping;
-    texture.wrapT = RepeatWrapping;
+    configureMaterialTexture(texture);
     const isCorrugated = specification?.group === "corrugated"
       || project.material === "corrugated"
       || project.material === "flute";
@@ -460,9 +462,7 @@ export function ViewportPane({
         viewport.invalidate();
       }
     });
-    texture.colorSpace = SRGBColorSpace;
-    texture.wrapS = RepeatWrapping;
-    texture.wrapT = RepeatWrapping;
+    configureMaterialTexture(texture);
     texture.center.set(0.5, 0.5);
     texture.rotation = (fluteAngle * Math.PI) / 180;
     texture.repeat.set(
@@ -610,7 +610,7 @@ export function ViewportPane({
       if (!(object instanceof Mesh)) return;
       const sceneMaterials = Array.isArray(object.material) ? object.material : [object.material];
       for (const material of sceneMaterials) {
-        if (material instanceof ShadowMaterial) material.opacity = 0.055;
+        if (material instanceof ShadowMaterial) material.opacity = 0.1;
       }
     });
     if (showOrigin) {
@@ -663,9 +663,7 @@ export function ViewportPane({
       const target = viewport.camera.controls.target;
       camera.updateMatrixWorld(true);
       const distance = Math.max(camera.position.distanceTo(target), 0.001);
-      const forward = target.clone().sub(camera.position).normalize();
-      const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-      const up = new Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+      const { forward, right, up } = sourceCameraLightBasis(camera);
       key.position.copy(camera.position)
         .addScaledVector(forward, 0.75 * distance)
         .addScaledVector(right, 0.4 * distance)
@@ -857,7 +855,9 @@ export function ViewportPane({
 
     const mesh = new Mesh(data.geometry, foldSceneMaterials.base);
     mesh.castShadow = showShadow && viewMode === "3d";
-    mesh.receiveShadow = true;
+    // Source faces cast onto the ground but do not receive the moving
+    // camera-relative key shadow themselves.
+    mesh.receiveShadow = false;
     const artworkMesh = foldSceneMaterials.artwork
       ? new Mesh(data.geometry, foldSceneMaterials.artwork)
       : null;

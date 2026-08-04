@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { sourceIsometricCameraState } from "./sourceCamera";
+import { PerspectiveCamera, Vector3 } from "three";
+import {
+  sourceCameraLightBasis,
+  sourceIsometricCameraState,
+} from "./sourceCamera";
 
 describe("source isometric camera", () => {
   it("matches the captured PackCAD direction without changing orbit distance", () => {
@@ -36,5 +40,25 @@ describe("source isometric camera", () => {
     expect(next.zoom).toBe(source.zoom);
     expect(next.kind).toBe(source.kind);
     expect(next.fov).toBe(15);
+  });
+});
+
+describe("source camera light basis", () => {
+  it("uses fixed camera-up instead of the orbit camera's rotating screen-up", () => {
+    const camera = new PerspectiveCamera();
+    camera.position.set(4, 3, 5);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, 0, 0);
+    camera.rotateZ(0.4);
+    camera.updateMatrixWorld(true);
+
+    const basis = sourceCameraLightBasis(camera);
+    const screenUp = new Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+
+    expect(basis.up.toArray()).toEqual([0, 1, 0]);
+    expect(basis.up.distanceTo(screenUp)).toBeGreaterThan(0.1);
+    expect(basis.right.distanceTo(
+      basis.forward.clone().cross(basis.up).normalize(),
+    )).toBeLessThan(1e-12);
   });
 });

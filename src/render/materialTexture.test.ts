@@ -1,6 +1,29 @@
 import { createPillowBoxProject } from "@packcad/fold-solver";
+import {
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  RepeatWrapping,
+  SRGBColorSpace,
+  Texture,
+} from "three";
 import { describe, expect, it } from "vitest";
-import { materialTextureRepeat } from "./materialTexture";
+import {
+  configureMaterialTexture,
+  materialTextureRepeat,
+} from "./materialTexture";
+
+describe("configureMaterialTexture", () => {
+  it("preserves PackCAD's mipmapped sampling for repeated stock fibres", () => {
+    const texture = configureMaterialTexture(new Texture());
+
+    expect(texture.colorSpace).toBe(SRGBColorSpace);
+    expect(texture.wrapS).toBe(RepeatWrapping);
+    expect(texture.wrapT).toBe(RepeatWrapping);
+    expect(texture.magFilter).toBe(LinearFilter);
+    expect(texture.minFilter).toBe(LinearMipmapLinearFilter);
+    expect(texture.generateMipmaps).toBe(true);
+  });
+});
 
 describe("source material texture mapping", () => {
   it("uses the pillow-box UV density and PackCAD's two-inch chipboard tile", () => {
