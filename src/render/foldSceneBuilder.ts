@@ -34,7 +34,7 @@ const v3norm = (a: V3): V3 => {
   return [a[0] / l, a[1] / l, a[2] / l];
 };
 
-type FacePointWeights = {
+export type FacePointWeights = {
   vertexIndices: [number, number, number];
   weights: [number, number, number];
 };
@@ -55,36 +55,66 @@ function bezierPoint(
   return [points[0][0], points[0][1]];
 }
 
-function facePointWeights(
+export function facePointWeights(
   model: FoldModel,
   faceIndex: number,
   point: readonly [number, number],
+  boundaryEdge?: readonly [number, number],
 ): FacePointWeights {
   const loop = model.facesVertices[faceIndex];
-  for (let aIndex = 0; aIndex < loop.length - 2; aIndex += 1) {
-    for (let bIndex = aIndex + 1; bIndex < loop.length - 1; bIndex += 1) {
-      for (let cIndex = bIndex + 1; cIndex < loop.length; cIndex += 1) {
-        const indices: [number, number, number] = [
-          loop[aIndex],
-          loop[bIndex],
-          loop[cIndex],
-        ];
-        const [a, b, c] = indices.map((index) => model.verticesCoords[index]);
-        const denominator =
-          (b[1] - c[1]) * (a[0] - c[0])
-          + (c[0] - b[0]) * (a[1] - c[1]);
-        if (Math.abs(denominator) <= 1e-9) continue;
-        const wa = (
-          (b[1] - c[1]) * (point[0] - c[0])
-          + (c[0] - b[0]) * (point[1] - c[1])
-        ) / denominator;
-        const wb = (
-          (c[1] - a[1]) * (point[0] - c[0])
-          + (a[0] - c[0]) * (point[1] - c[1])
-        ) / denominator;
-        return { vertexIndices: indices, weights: [wa, wb, 1 - wa - wb] };
-      }
+  const triangles = triangulateFace(loop, model.verticesCoords) as Array<[
+    number,
+    number,
+    number,
+  ]>;
+  const weightsForTriangle = (
+    indices: [number, number, number],
+  ): FacePointWeights | null => {
+    const [a, b, c] = indices.map((index) => model.verticesCoords[index]);
+    const denominator =
+      (b[1] - c[1]) * (a[0] - c[0])
+      + (c[0] - b[0]) * (a[1] - c[1]);
+    if (Math.abs(denominator) <= 1e-9) return null;
+    const wa = (
+      (b[1] - c[1]) * (point[0] - c[0])
+      + (c[0] - b[0]) * (point[1] - c[1])
+    ) / denominator;
+    const wb = (
+      (c[1] - a[1]) * (point[0] - c[0])
+      + (a[0] - c[0]) * (point[1] - c[1])
+    ) / denominator;
+    return { vertexIndices: indices, weights: [wa, wb, 1 - wa - wb] };
+  };
+
+  // A restored Bezier boundary lies just outside the straight chord used by
+  // the fold solver. Map it through the triangle which owns that chord. Using
+  // an arbitrary triangle elsewhere in the polygon extrapolates the point
+  // across a deforming folded face and creates the long corner spikes visible
+  // on the pillow box's thickness shell.
+  if (boundaryEdge) {
+    const [edgeA, edgeB] = boundaryEdge;
+    const owner = triangles.find((triangle) =>
+      triangle.includes(edgeA) && triangle.includes(edgeB));
+    if (owner) {
+      const result = weightsForTriangle(owner);
+      if (result) return result;
     }
+  }
+
+  // General face points prefer the containing flat triangle. This keeps their
+  // interpolation local when the panel is not perfectly rigid.
+  for (const triangle of triangles) {
+    const result = weightsForTriangle(triangle);
+    if (
+      result
+      && result.weights.every((weight) => weight >= -1e-9 && weight <= 1 + 1e-9)
+    ) {
+      return result;
+    }
+  }
+  for (const triangle of triangles) {
+    const result = weightsForTriangle(triangle);
+    if (result) return result;
   }
   const fallback = loop[0] ?? 0;
   return {
@@ -435,8 +465,14 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     faceIndex: number,
     flatPoint: readonly [number, number],
     normalOffset: number,
+    boundaryEdge?: readonly [number, number],
   ): { position: V3; uv: [number, number]; recipe: FoldVertexPositionRecipe } => {
-    const { vertexIndices, weights } = facePointWeights(model, faceIndex, flatPoint);
+    const { vertexIndices, weights } = facePointWeights(
+      model,
+      faceIndex,
+      flatPoint,
+      boundaryEdge,
+    );
     const position = weightedV3(scenePositions, vertexIndices, weights);
     const uvA = uvOf(vertexIndices[0]);
     const uvB = uvOf(vertexIndices[1]);
@@ -562,8 +598,9 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         backCurve.push(face.back.get(vb)!);
         return;
       }
-      const frontPoint = facePoint(faceIndex, flatPoint, fOff);
-      const backPoint = facePoint(faceIndex, flatPoint, bOff);
+      const boundaryEdge = [va, vb] as const;
+      const frontPoint = facePoint(faceIndex, flatPoint, fOff, boundaryEdge);
+      const backPoint = facePoint(faceIndex, flatPoint, bOff, boundaryEdge);
       frontCurve.push(pushVert(
         v3add(frontPoint.position, v3scale(face.nrm, fOff)),
         frontPoint.uv,

@@ -2,12 +2,14 @@ import {
   createCurvedBoxProject,
   createMailerBoxProject,
   createMilkCartonProject,
+  createPillowBoxProject,
   solveFoldTimeline,
 } from "@packcad/fold-solver";
 import { BufferAttribute, BufferGeometry } from "three";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildFoldScene,
+  facePointWeights,
   SOURCE_THICKNESS_DISPLAY_SCALE,
   updateFoldScenePositions,
   type FoldSceneData,
@@ -25,6 +27,36 @@ function disposeScene(scene: FoldSceneData): void {
 }
 
 describe("fold scene frame updates", () => {
+  it("anchors restored pillow-box curves to their owning boundary triangles", () => {
+    const model = createPillowBoxProject().foldModel;
+    if (!model) throw new Error("PillowBox fixture did not produce a fold model");
+    let checkedCurves = 0;
+
+    model.edgeControlPoints?.forEach((controls, edgeIndex) => {
+      const faces = model.edgeFaces[edgeIndex] ?? [];
+      if (controls.length === 0 || faces.length !== 1) return;
+      const [va, vb] = model.edgesVertices[edgeIndex];
+      const start = model.verticesCoords[va];
+      const end = model.verticesCoords[vb];
+      const midpoint: [number, number] = [
+        (start[0] + end[0]) / 2,
+        (start[1] + end[1]) / 2,
+      ];
+      const weights = facePointWeights(
+        model,
+        faces[0],
+        midpoint,
+        [va, vb],
+      );
+
+      expect(weights.vertexIndices).toContain(va);
+      expect(weights.vertexIndices).toContain(vb);
+      checkedCurves += 1;
+    });
+
+    expect(checkedCurves).toBeGreaterThan(0);
+  });
+
   it("ignores stale playback positions while switching between source projects", () => {
     const milkModel = createMilkCartonProject().foldModel;
     const curvedProject = createCurvedBoxProject();
