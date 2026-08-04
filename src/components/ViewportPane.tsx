@@ -563,7 +563,9 @@ export function ViewportPane({
     const source = frontArtworkTexture ?? orientationFrontTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    applyArtworkPlacement(texture, project.artwork, viewMode === "2d");
+    // The dieline view no longer mirrors its geometry (3D transforms are kept out
+    // of it), so its artwork uses the same handedness as the folded view.
+    applyArtworkPlacement(texture, project.artwork, false);
     return texture;
   }, [frontArtworkTexture, orientationFrontTexture, project.artwork, viewMode]);
   const placedBackArtworkTexture = useMemo(() => {
@@ -573,9 +575,13 @@ export function ViewportPane({
       ?? orientationFrontTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    applyArtworkPlacement(texture, project.artwork, Boolean(backArtworkTexture || frontArtworkTexture));
+    applyArtworkPlacement(
+      texture,
+      project.artwork,
+      viewMode !== "2d" && Boolean(backArtworkTexture || frontArtworkTexture),
+    );
     return texture;
-  }, [backArtworkTexture, frontArtworkTexture, orientationBackTexture, orientationFrontTexture, project.artwork]);
+  }, [backArtworkTexture, frontArtworkTexture, orientationBackTexture, orientationFrontTexture, project.artwork, viewMode]);
   useEffect(
     () => () => {
       placedFrontArtworkTexture?.dispose();

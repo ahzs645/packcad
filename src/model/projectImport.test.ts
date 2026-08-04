@@ -13,7 +13,7 @@ describe("project file import", () => {
       app_version: "1.3.31",
       design: source.design,
     }));
-    expect(project.foldModel?.verticesCoords).toHaveLength(104);
+    expect(project.foldModel?.verticesCoords).toHaveLength(106);
     expect(project.foldModel?.facesVertices).toHaveLength(19);
     expect(project.foldingSteps).toHaveLength(6);
   });
@@ -29,7 +29,7 @@ describe("project file import", () => {
     // nothing may recognise a document and substitute captured state for it.
     expect(project.foldModel).toEqual(source.foldModel);
     expect(project.foldModel?.keyframes.map((keyframe) => keyframe.creaseAnglesDeg)).toEqual([
-      { 56: 95, 89: 95, 160: 95, 193: 95 },
+      { 54: 95, 86: 95, 159: 95, 194: 95 },
       { 0: 89, 1: 105 },
     ]);
   });

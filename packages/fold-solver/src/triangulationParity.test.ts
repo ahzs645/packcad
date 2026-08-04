@@ -140,6 +140,6 @@ describe("R2: cdt2d vs delaunator triangulation parity", () => {
       const same = legacy.size === next.size && [...legacy].every((triangle) => next.has(triangle));
       if (!same) mismatches.push(faceIndex);
     });
-    expect(mismatches).toEqual([6, 10, 27, 50, 52, 60, 61, 64]);
+    expect(mismatches).toEqual([15, 27, 35, 40, 50, 60, 62]);
   });
 });

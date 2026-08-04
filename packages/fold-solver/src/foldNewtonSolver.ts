@@ -107,7 +107,12 @@ function triApex(tri: Tri, a: number, b: number): number {
 // ---- constraints ------------------------------------------------------------
 type EdgeC = { kind: "edge"; i: number; j: number; rest: number; G: number };
 // Dihedral: hinge (a,b); tri1 (winding a->b, apex w1), tri2 (b->a, apex w2).
-type DihC = { kind: "dih"; a: number; b: number; w1: number; w2: number; target: number; G: number; edge: number };
+type DihC = {
+  kind: "dih"; a: number; b: number; w1: number; w2: number; target: number; G: number; edge: number;
+  /** Adjacent faces (f1 winds a->b), set for crease dihedrals only. The
+   *  reference measures those from the two faces' normals, not the triangles'. */
+  f1?: number; f2?: number;
+};
 
 export type NewtonFold = {
   positions: V3[];
@@ -334,6 +339,8 @@ export function foldNewton(
       target: targetDeg * Math.PI / 180,
       G: STIFFNESS_ACTIVE_CREASE * rest,
       edge: ei,
+      f1,
+      f2,
     };
     creases.push(c);
     dihs.push(c);
@@ -379,6 +386,46 @@ export function foldNewton(
     (p) => [p[0], p[1], p[2]] as V3,
   );
 
+  // ---- face normals ---------------------------------------------------------
+  // A crease's fold angle comes from `PEdge.foldAngle3DRadians`, which reads the
+  // two adjacent *faces'* normals -- `FaceTriangulation._normal3DApprox`, the
+  // normalised Newell sum over the face's whole boundary loop. Only the interior
+  // (facet) dihedrals read triangle normals. The distinction is invisible while
+  // faces stay flat and decisive once they bow: the two measures differ by up to
+  // 17 degrees on the pillow box, and driving the wrong one leaves the reference's
+  // implicit "hold flat" constraints violated by that much.
+  const faceNormals: Array<V3 | null> = model.facesVertices.map(() => null);
+  const invalidateFaceNormals = (): void => { faceNormals.fill(null); };
+  const faceNormal = (fi: number): V3 => {
+    const cached = faceNormals[fi];
+    if (cached) return cached;
+    const loop = model.facesVertices[fi];
+    let nx = 0;
+    let ny = 0;
+    let nz = 0;
+    for (let i = 0; i < loop.length; i += 1) {
+      const p = x[loop[i]];
+      const q = x[loop[(i + 1) % loop.length]];
+      nx += p[1] * q[2] - p[2] * q[1];
+      ny += p[2] * q[0] - p[0] * q[2];
+      nz += p[0] * q[1] - p[1] * q[0];
+    }
+    const n = norm([nx, ny, nz]);
+    faceNormals[fi] = n;
+    return n;
+  };
+  /** The edge's two faces ordered so the first winds a->b, as the crease
+   *  dihedral's tri1/tri2 are. */
+  const creaseFaces = (edge: number, a: number, b: number): [number, number] | null => {
+    const faces = model.edgeFaces[edge];
+    if (!faces || faces.length < 2) return null;
+    const [p, q] = faces;
+    return edgeTraversal(model.facesVertices[p], a, b) !== 1
+      && edgeTraversal(model.facesVertices[q], a, b) === 1
+      ? [q, p]
+      : [p, q];
+  };
+
   // ---- fold branch state ----------------------------------------------------
   // The reference keeps a CreaseDihedralConstraint on every manifold edge, so
   // the branch latch is maintained model-wide, not just on the driven creases.
@@ -388,12 +435,16 @@ export function foldNewton(
   const latchHinges = manifoldHinges(model).filter(
     (h) => !pinned[h.a] || !pinned[h.b] || !pinned[h.w1] || !pinned[h.w2],
   );
+  // The latch is set by CreaseDihedralConstraint.updateCurrentValue, so it reads
+  // the same face-normal angle the crease constraints do.
   const refreshBranchSigns = (): void => {
     for (const h of latchHinges) {
-      const n1 = triNormal(x, h.a, h.b, h.w1);
-      const n2 = triNormal(x, h.b, h.a, h.w2);
       const eHat = norm(sub(x[h.b], x[h.a]));
-      updateBranchSign(branchSigns, h.edge, foldAngle(n1, n2, eHat));
+      updateBranchSign(
+        branchSigns,
+        h.edge,
+        foldAngle(faceNormal(h.f1), faceNormal(h.f2), eHat),
+      );
     }
   };
   refreshBranchSigns();
@@ -409,7 +460,12 @@ export function foldNewton(
     // facet dihedrals (edge < 0) are interior triangulation half-edges with no
     // pEdge, so the reference reads their plain wrapped angle.
     const current = c.edge >= 0
-      ? unwrapFoldAngle(foldAngle(n1, n2, eHat), branchSigns[c.edge])
+      ? unwrapFoldAngle(
+        c.f1 !== undefined && c.f2 !== undefined
+          ? foldAngle(faceNormal(c.f1), faceNormal(c.f2), eHat)
+          : foldAngle(n1, n2, eHat),
+        branchSigns[c.edge],
+      )
       : foldAngle(n1, n2, eHat);
     const E0 = leverArm(x, c.w2, c.a, c.b) / scale;
     const F0 = leverArm(x, c.w1, c.a, c.b) / scale;
@@ -493,6 +549,7 @@ export function foldNewton(
   // ---- line search (apply pos = prev + Δ·step·scale) -----------------------
   const prev = new Float64Array(F);
   const applyStep = (delta: Float64Array, step: number) => {
+    invalidateFaceNormals();
     const A = step * scale;
     for (let v = 0; v < N; v += 1) {
       for (let ax = 0; ax < 3; ax += 1) {

@@ -14,7 +14,7 @@ describe("PackCAD sample library", () => {
     ]);
     const project = createPackCadSampleProject("live-mailer-box");
     expect(project.design?.name).toBe("MailerBox");
-    expect(project.foldModel?.verticesCoords).toHaveLength(104);
+    expect(project.foldModel?.verticesCoords).toHaveLength(106);
     expect(project.foldModel?.facesVertices).toHaveLength(19);
     expect(project.materialSpec).toBe(
       "MATERIAL_CORRUGATED_CARDBOARD_E_FLUTE",
@@ -23,8 +23,8 @@ describe("PackCAD sample library", () => {
   });
 
   it.each([
-    ["milk-carton", "milk_carton", 57, 25],
-    ["curved-box", "curvedbox", 198, 80],
+    ["milk-carton", "milk_carton", 53, 25],
+    ["curved-box", "curvedbox", 202, 80],
     ["pillow-box", "pillowbox", 176, 67],
   ] as const)(
     "loads %s with its source geometry",

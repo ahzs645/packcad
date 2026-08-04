@@ -32,6 +32,7 @@
 
 import { triangulateFaceDelaunay } from "./faceTriangulation";
 import type { FoldModel } from "@packcad/format";
+import type { Vec3 } from "./foldSolver";
 
 const TWO_PI = Math.PI * 2;
 /** `Math.abs(currentValue) < 1.5` in the reference; ~85.94 degrees. */
@@ -50,7 +51,33 @@ export type FoldHinge = {
   b: number;
   w1: number;
   w2: number;
+  /** The two adjacent faces, `f1` being the one whose loop traverses a->b. A
+   *  crease's fold angle is read from these, not from the apex triangles --
+   *  see `faceLoopNormal`. */
+  f1: number;
+  f2: number;
 };
+
+/**
+ * `FaceTriangulation._normal3DApprox`: the normalised Newell sum over a face's
+ * whole boundary loop. The reference measures a crease's fold angle from the
+ * two adjacent faces' normals (`PEdge.foldAngle3DRadians`) and only interior
+ * facet dihedrals from triangle normals, which matters as soon as a face bows.
+ */
+export function faceLoopNormal(positions: Vec3[], loop: number[]): Vec3 {
+  let nx = 0;
+  let ny = 0;
+  let nz = 0;
+  for (let i = 0; i < loop.length; i += 1) {
+    const p = positions[loop[i]];
+    const q = positions[loop[(i + 1) % loop.length]];
+    nx += p[1] * q[2] - p[2] * q[1];
+    ny += p[2] * q[0] - p[0] * q[2];
+    nz += p[0] * q[1] - p[1] * q[0];
+  }
+  const length = Math.hypot(nx, ny, nz) || 1;
+  return [nx / length, ny / length, nz / length];
+}
 
 /** +1 if loop traverses a->b, -1 if b->a, 0 otherwise. */
 export function edgeTraversal(loop: number[], a: number, b: number): number {
@@ -87,7 +114,7 @@ export function manifoldHinges(model: FoldModel): FoldHinge[] {
     const w1 = firstTriangle.find((v) => v !== a && v !== b);
     const w2 = secondTriangle.find((v) => v !== a && v !== b);
     if (w1 === undefined || w2 === undefined) return;
-    hinges.push({ edge, a, b, w1, w2 });
+    hinges.push({ edge, a, b, w1, w2, f1: first, f2: second });
   });
   return hinges;
 }

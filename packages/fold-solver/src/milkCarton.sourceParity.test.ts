@@ -15,8 +15,8 @@ describe("milk carton source parity", () => {
   it("keeps the imported carton topology and authored operations as a regression fixture", () => {
     const model = milkCartonModel();
 
-    expect(model.verticesCoords).toHaveLength(57);
-    expect(model.edgesVertices).toHaveLength(81);
+    expect(model.verticesCoords).toHaveLength(53);
+    expect(model.edgesVertices).toHaveLength(77);
     expect(model.facesVertices).toHaveLength(25);
     expect(model.keyframes.map((keyframe) => keyframe.label)).toEqual([
       "vertical creases",

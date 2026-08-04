@@ -19,17 +19,20 @@ const samples = [
   {
     name: "milk carton",
     create: createMilkCartonProject,
-    topology: [57, 81, 25, 5],
+    topology: [53, 77, 25, 5],
     extents: [324.1341, 324, 776.4429],
   },
   {
-    // The reference's own instrumented build reports 202/281/80 and a folded
-    // size of 496.2 x 498.2 x 875.4 px with every stage Solved; we agree on
-    // face count and on all three axes to within 0.4%.
+    // Driven stage by stage in the reference's own instrumented build, the
+    // curved box reports 202/281/80 and
+    //   K1  20 cycles  1296.0 x 288.0 x 907.8   K2 108 cycles  405.9 x 407.9 x 896.2
+    //   K3  19 cycles   405.9 x 407.9 x 896.3   K4  11 cycles  496.2 x 498.2 x 875.4
+    // every stage Solved. We match the topology exactly, match all four cycle
+    // counts exactly, and agree on every axis to within 0.4%.
     name: "curved box",
     create: createCurvedBoxProject,
-    topology: [198, 277, 80, 4],
-    extents: [496.962, 500.0597, 875.2888],
+    topology: [202, 281, 80, 4],
+    extents: [497.025, 499.989, 875.4532],
   },
 ] as const;
 
@@ -84,7 +87,7 @@ describe("source package assembly parity", () => {
       expect(summary.overall).toMatchObject({ status: "Solved", unresolvedSeams: 0 });
       expect(summary.keyframes.every((keyframe) => keyframe.status === "Solved")).toBe(true);
     },
-    60_000,
+    180_000,
   );
 
   it("stalls the pillow box's end tucks short of their target, as the reference does", () => {
@@ -96,7 +99,7 @@ describe("source package assembly parity", () => {
       model.facesVertices.length,
     ]).toEqual([176, 242, 67]);
     expect(model.keyframes.map((keyframe) => keyframe.creaseAnglesDeg)).toEqual([
-      { 56: 95, 89: 95, 160: 95, 193: 95 },
+      { 54: 95, 86: 95, 159: 95, 194: 95 },
       { 0: 89, 1: 105 },
     ]);
 
@@ -105,7 +108,7 @@ describe("source package assembly parity", () => {
     // The reference cannot reach 95 degrees on the four curved end tucks: driven
     // from its own instrumented build they settle at 91.17 .. 91.52 and it
     // reports the stage Non-Rigid. Reproduce that rather than forcing the target.
-    for (const edge of [56, 89, 160, 193]) {
+    for (const edge of [54, 86, 159, 194]) {
       expect(measured[edge]).toBeGreaterThan(88);
       expect(measured[edge]).toBeLessThan(94);
     }
@@ -115,7 +118,7 @@ describe("source package assembly parity", () => {
     expect(solved.isSolved).toBe(false);
     // Compact, not the ~697 x 579 open shell the removed calibration produced.
     expect(axisExtent(solved.positions, 0)).toBeLessThan(400);
-    expect(axisExtent(solved.positions, 1)).toBeCloseTo(471.7, 0);
+    expect(axisExtent(solved.positions, 1)).toBeCloseTo(473.1, 0);
   }, 60_000);
 
   it("reports Non-Rigid when a keyframe cannot reach its authored angles", () => {

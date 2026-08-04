@@ -1,6 +1,7 @@
 import type { FoldKeyframe, FoldModel } from "@packcad/format";
 import {
   manifoldHinges,
+  faceLoopNormal,
   unwrapFoldAngle,
   type FoldBranchSigns,
 } from "./foldBranchState";
@@ -29,10 +30,6 @@ function dot(a: Vec3, b: Vec3): number {
 function normalize(vector: Vec3): Vec3 {
   const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
   return [vector[0] / length, vector[1] / length, vector[2] / length];
-}
-
-function triangleNormal(positions: Vec3[], a: number, b: number, c: number): Vec3 {
-  return normalize(cross(subtract(positions[b], positions[a]), subtract(positions[c], positions[a])));
 }
 
 /**
@@ -107,9 +104,12 @@ export function measureCreaseAnglesDegrees(
 ): Record<number, number> {
   const measured: Record<number, number> = {};
   for (const hinge of manifoldHinges(model)) {
-    const { edge, a, b, w1, w2 } = hinge;
-    const firstNormal = triangleNormal(positions, a, b, w1);
-    const secondNormal = triangleNormal(positions, b, a, w2);
+    const { edge, a, b, f1, f2 } = hinge;
+    // `PEdge.foldAngle3DRadians` -- the two adjacent faces' normals, not the
+    // apex triangles'. This has to agree with the solver's crease measure,
+    // because the implicit "hold at the incoming angle" targets are read here.
+    const firstNormal = faceLoopNormal(positions, model.facesVertices[f1]);
+    const secondNormal = faceLoopNormal(positions, model.facesVertices[f2]);
     const edgeDirection = normalize(subtract(positions[b], positions[a]));
     const wrapped = Math.atan2(
       dot(cross(firstNormal, secondNormal), edgeDirection),

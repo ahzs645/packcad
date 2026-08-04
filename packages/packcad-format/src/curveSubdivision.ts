@@ -1,48 +1,47 @@
-// Curved-crease subdivision, matching the reference app's SVG import.
+// Curved-crease discretisation, matching the reference app's SVG import.
 //
 // A PackCAD dieline stores curved boundaries and creases as cubic Bezier edges
 // (`edges_vertices` carries two control-point indices after its two endpoints).
-// The reference does NOT fold those as straight chords: its importer flattens
-// each curve into several straight edges before building the graph, so a curved
-// crease has interior vertices that are free to move.
+// The reference does NOT fold those as straight chords: `Pattern2D.discretize-
+// Curves(stepSize, maxDeviation)` walks each curve and drops interior vertices
+// along it, so a curved crease has free vertices that can move as it folds.
 //
-// Measured against the reference's own graph for the bundled pillow box (its
-// `verticesAdded` list is the post-subdivision vertex list):
+// The reference's per-edge routine (CPIO_Edge2D.discretize) is a greedy
+// arc-length walk with a straightness test, not a fixed subdivision count:
 //
-//     FOLD document : 88 vertices, 154 edges, 88 of them curved
-//     reference     : 176 vertices, 242 edges
-//     difference    : +88 vertices, +88 edges
+//     n     = ceil(edgeArcLength / stepSize)      // stepSize = 1/8 in
+//     step  = edgeArcLength / n
+//     lut   = bezier.getLUT(n * 3)
+//     walk the LUT accumulating chord distance from the last emitted vertex:
+//       - under one `step` of arc         -> keep walking
+//       - still within maxDeviation of the ray (anchor + tangent * walked)
+//                                          -> keep walking (the curve is
+//                                             locally straight, no vertex here)
+//       - otherwise                        -> emit a vertex at exactly one
+//                                             `step` of arc length, re-anchor
+//                                             there and re-read the tangent
+//     stop once the walk comes within step/2 of the far endpoint.
 //
-// and per curve, grouped by how many straight pieces it became:
-//
-//     1 piece  : 16 curves, chord deviation 0.309 .. 0.323
-//     2 pieces : 56 curves, chord deviation 0.322 .. 0.723
-//     3 pieces : 16 curves, chord deviation 1.515 .. 1.518
-//
-// so the piece count follows the curve's deviation from its chord, not its
-// length (same-length curves take different counts), and the cut points sit at
-// equal ARC LENGTH along the curve rather than at equal parameter -- the
-// observed parameters are 1/3, 2/5, 1/2, 2/3, 3/4 for curves whose
-// parameterisation is non-uniform.
-//
-// Splitting a curve into n pieces divides its sagitta by about n^2, so the
-// reference's counts are reproduced by n = ceil(sqrt(sagitta / tolerance)).
-//
-// This lands the pillow box exactly (176 vertices / 242 edges, matching the
-// reference) and the curved box within four vertices (198 vs its 202), whose
-// folded size still agrees to 0.4% on every axis. No single tolerance satisfies
-// both counts exactly -- the pillow box wants ~0.3225 and the curved box wants
-// ~0.28..0.30 -- so the reference's tie-breaking at the boundary is slightly
-// different from a plain ceil(); the chord-deviation mechanism itself is what
-// matters here and is confirmed by both fixtures.
+// This reproduces the reference's own graph exactly. Verified against a live
+// capture of its `__endingGraph` for the bundled pillow box: all 176 vertices
+// land within 0.05px, including the two properties no fixed-count rule can
+// produce -- cells whose curve is straight enough to receive no vertex at all,
+// and the asymmetry between the two ends of a nearly-symmetric arc (its first
+// cell is cut at t = 1/3, 2/3 while the mirroring last cell is cut at 2/5,
+// 11/15, because the walk runs from one end).
 
 import type { FoldModel } from "./foldGeometry";
 
-/** Chord-deviation tolerance in the model's coordinate unit (px for PackCAD
- *  dielines). Straddles the reference's measured 1-piece/2-piece boundary. */
-const CHORD_DEVIATION_TOLERANCE = 0.3225;
-/** Samples used for the arc-length table of each curve. */
-const ARC_SAMPLES = 256;
+/** SVG user units per inch (CPIO_DEFAULT_SVG_PPI). Dieline coordinates are in
+ *  this frame, so the reference's inch-denominated tolerances convert directly. */
+const SVG_PPI = 72;
+/** DEFAULT_SVG_IMPORT_CURVE_DISCRETIZATION_STEP_SIZE_IN = 1/8. */
+const CURVE_STEP_SIZE_PX = (1 / 8) * SVG_PPI;
+/** DEFAULT_SVG_IMPORT_CURVE_DISCRETIZATION_MAX_DEVIATION_IN = 1/80. */
+const CURVE_MAX_DEVIATION_PX = (1 / 80) * SVG_PPI;
+/** Samples used for the arc-length integral of each curve. */
+const ARC_SAMPLES = 4096;
+const NUMERICAL_TOL = 1e-12;
 
 type Point = [number, number];
 type Cubic = [Point, Point, Point, Point];
@@ -60,46 +59,99 @@ function at(curve: Cubic, t: number): Point {
   ];
 }
 
+/** Unit tangent at `t` (the reference's endpoint secant / `bezier.derivative`). */
+function tangentAt(curve: Cubic, t: number): Point {
+  const u = 1 - t;
+  const [p0, p1, p2, p3] = curve;
+  const x = 3 * u * u * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]);
+  const y = 3 * u * u * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]);
+  const length = Math.hypot(x, y);
+  return length < NUMERICAL_TOL ? [0, 0] : [x / length, y / length];
+}
+
 function distance(a: Point, b: Point): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
 }
 
-/** Largest perpendicular distance from the curve to its chord. */
-function chordDeviation(curve: Cubic): number {
-  const [p0, , , p3] = curve;
-  const ax = p3[0] - p0[0];
-  const ay = p3[1] - p0[1];
-  const chord = Math.hypot(ax, ay);
-  if (chord < 1e-12) return 0;
-  let worst = 0;
-  for (let i = 1; i < ARC_SAMPLES; i += 1) {
-    const q = at(curve, i / ARC_SAMPLES);
-    worst = Math.max(worst, Math.abs((q[0] - p0[0]) * ay - (q[1] - p0[1]) * ax) / chord);
-  }
-  return worst;
-}
-
-/** Parameters cutting the curve into `pieces` equal arc-length spans. */
-function equalArcParameters(curve: Cubic, pieces: number): number[] {
-  const cumulative: number[] = [0];
+function arcLength(curve: Cubic): number {
+  let total = 0;
   let previous = at(curve, 0);
   for (let i = 1; i <= ARC_SAMPLES; i += 1) {
     const point = at(curve, i / ARC_SAMPLES);
-    cumulative.push(cumulative[i - 1] + distance(previous, point));
+    total += distance(previous, point);
     previous = point;
   }
-  const total = cumulative[ARC_SAMPLES];
-  const parameters: number[] = [];
-  for (let piece = 1; piece < pieces; piece += 1) {
-    const target = (total * piece) / pieces;
-    let index = 1;
-    while (index < ARC_SAMPLES && cumulative[index] < target) index += 1;
-    const before = cumulative[index - 1];
-    const span = cumulative[index] - before;
-    const fraction = span > 1e-12 ? (target - before) / span : 0;
-    parameters.push((index - 1 + fraction) / ARC_SAMPLES);
+  return total;
+}
+
+/**
+ * Parameters at which the reference drops interior vertices along `curve`.
+ * Returns an empty list when the curve is straight enough to stay one edge.
+ */
+export function discretizeCurve(
+  curve: Cubic,
+  stepSizePx: number = CURVE_STEP_SIZE_PX,
+  maxDeviationPx: number = CURVE_MAX_DEVIATION_PX,
+): number[] {
+  const total = arcLength(curve);
+  if (total < NUMERICAL_TOL) return [];
+  const step = total / Math.ceil(total / stepSizePx);
+  const limit = maxDeviationPx * maxDeviationPx;
+  // getLUT(n * 3) -- one sample per third of a step, plus the endpoint.
+  const samples = Math.ceil(total / stepSizePx) * 3;
+  const lut: Point[] = [];
+  for (let i = 0; i <= samples; i += 1) lut.push(at(curve, i / samples));
+
+  const end = curve[3];
+  const cuts: number[] = [];
+  let tangent = tangentAt(curve, 0);
+  let anchor = lut[0];
+  let previous = lut[0];
+  let previousT = 0;
+  let walked = 0;
+  let walkedBefore = 0;
+
+  for (let i = 1; i <= samples; i += 1) {
+    const point = lut[i];
+    if (distance(point, end) < step / 2) break;
+    const span = distance(point, previous);
+    walkedBefore = walked;
+    walked += span;
+    const t = i / samples;
+    // not yet a full step of arc away from the last vertex
+    if (walked < step) {
+      previous = point;
+      previousT = t;
+      continue;
+    }
+    // still tracking the straight ray we set off along -- no vertex needed
+    const rayX = anchor[0] + tangent[0] * walked;
+    const rayY = anchor[1] + tangent[1] * walked;
+    if ((rayX - point[0]) ** 2 + (rayY - point[1]) ** 2 < limit) {
+      previous = point;
+      previousT = t;
+      continue;
+    }
+    // emit -- back up to exactly one step of arc unless we already overshot
+    let cut: number;
+    let position: Point;
+    if (walkedBefore > step) {
+      cut = previousT;
+      position = previous;
+    } else {
+      const fraction = 1 - (walked - step) / span;
+      cut = previousT + fraction * (t - previousT);
+      position = at(curve, cut);
+    }
+    cuts.push(cut);
+    tangent = tangentAt(curve, cut);
+    anchor = position;
+    previous = position;
+    previousT = cut;
+    walked = 0;
+    walkedBefore = 0;
   }
-  return parameters;
+  return cuts;
 }
 
 /** de Casteljau: the sub-curve of `curve` over [t0, t1]. */
@@ -125,14 +177,11 @@ function edgeKey(a: number, b: number): string {
 }
 
 /**
- * Flatten every curved edge into straight pieces, rewriting vertices, edges,
+ * Discretise every curved edge into straight pieces, rewriting vertices, edges,
  * face loops and the keyframes' crease targets to match. Straight edges and
  * models without control points are returned untouched.
  */
-export function subdivideCurvedEdges(
-  model: FoldModel,
-  tolerance: number = CHORD_DEVIATION_TOLERANCE,
-): FoldModel {
+export function subdivideCurvedEdges(model: FoldModel): FoldModel {
   const controlPoints = model.edgeControlPoints;
   if (!controlPoints || controlPoints.length === 0) return model;
 
@@ -153,11 +202,9 @@ export function subdivideCurvedEdges(
       [handles[1][0], handles[1][1]],
       [model.verticesCoords[v1][0], model.verticesCoords[v1][1]],
     ];
-    const deviation = chordDeviation(curve);
-    const pieces = Math.max(1, Math.ceil(Math.sqrt(deviation / tolerance)));
-    if (pieces < 2) return;
+    const cuts = discretizeCurve(curve);
+    if (cuts.length === 0) return;
 
-    const cuts = equalArcParameters(curve, pieces);
     const chain = [v0];
     for (const t of cuts) {
       const point = at(curve, t);

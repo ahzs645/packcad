@@ -17,10 +17,10 @@ describe("live MailerBox source parity", () => {
 
     // Curved edges are flattened into straight pieces at import, as the
     // reference does, so the mesh is denser than the raw FOLD document.
-    expect(model.verticesCoords).toHaveLength(104);
+    expect(model.verticesCoords).toHaveLength(106);
     expect(model.facesVertices).toHaveLength(19);
-    // 8 authored curved edges, flattened into 38 straight pieces.
-    expect(model.edgeControlPoints?.filter((points) => points.length > 0)).toHaveLength(38);
+    // 8 authored curved edges, discretised into 40 straight pieces.
+    expect(model.edgeControlPoints?.filter((points) => points.length > 0)).toHaveLength(40);
     expect(model.keyframes.map((keyframe) =>
       Object.keys(keyframe.creaseAnglesDeg).length)).toEqual([4, 2, 4, 4, 4]);
     expect(model.keyframes.map((keyframe) =>

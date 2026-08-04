@@ -2,20 +2,19 @@
 //
 // The reference triangulates each face with cdt2d, a *constrained Delaunay*
 // mesher. `@atelier/geometry`'s `triangulateFace` returns a valid triangulation
-// but does not maximise the minimum angle, and after curved edges are flattened
-// into several short pieces that difference stops being cosmetic: the pillow
-// box comes out with 80 of its 258 triangles under 5 degrees and a worst angle
-// of 1.25 degrees.
-//
-// That matters because every facet dihedral constraint's Jacobian carries
-// 1/tan(sector angle) and 1/leverArm terms. On a sliver both blow up, the
-// assembled system is badly conditioned, and the faces bend along the flattened
-// curve instead of staying flat -- which showed up as a pillow box 57% too deep
-// whose crease angles had lost the reference's left/right symmetry.
-//
-// Lawson edge flipping turns any triangulation of a simple polygon into its
-// constrained Delaunay triangulation, so this refines what `triangulateFace`
+// but does not maximise the minimum angle, and every facet dihedral Jacobian
+// carries 1/tan(sector angle) and 1/leverArm terms, both of which blow up on a
+// sliver. Lawson edge flipping turns any triangulation of a simple polygon into
+// its constrained Delaunay triangulation, so this refines what `triangulateFace`
 // produces rather than replacing the mesher.
+//
+// Keep the expectations here modest: measured against the reference's own
+// captured `face.triangulation`, this still picks a different diagonal on 27 of
+// the pillow box's 67 faces (35 of 191 diagonals), and substituting cdt2d's
+// exact diagonals moves the converged K1 fold by about half a pixel. The
+// triangulation is not what makes a fold match the reference -- the curve
+// discretisation (see `curveSubdivision`) and measuring crease angles from face
+// rather than triangle normals (see `faceLoopNormal`) are.
 
 import { triangulateFace } from "@atelier/geometry";
 

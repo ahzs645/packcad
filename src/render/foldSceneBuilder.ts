@@ -293,10 +293,26 @@ function flatFoldPositions(model: FoldModel): V3[] {
   return model.verticesCoords.map(([x, y]) => [x, y, 0]);
 }
 
-/** Shared geometric frame so the flat 2D and folded 3D scenes use one scale/center. */
-export function foldSceneFrame(model: FoldModel) {
-  const flatOriented = applyTransforms(flatFoldPositions(model), model.transforms);
-  const { min, max } = weldedBounds(flatOriented);
+/**
+ * A model's `transforms` come from OPERATION_TRANSFORM_3D_* -- they orient the
+ * package in 3D and must not reach the dieline. Every bundled document carries a
+ * 180-degree rotation about Y, so applying it to the flat view mirrors the
+ * dieline left-to-right against the SVG it was imported from (the reference
+ * shows the pattern as authored).
+ */
+function orientedFor(projection: FoldProjection, positions: V3[], model: FoldModel): V3[] {
+  return projection === "flat-2d" ? positions : applyTransforms(positions, model.transforms);
+}
+
+/**
+ * Shared geometric frame so the flat 2D and folded 3D scenes use one scale.
+ * The centre is per-projection: the transforms rotate about the origin, so the
+ * oriented and un-oriented dielines have different centres even though their
+ * extents (and therefore the scale) are identical.
+ */
+export function foldSceneFrame(model: FoldModel, projection: FoldProjection = "folded-3d") {
+  const flat = orientedFor(projection, flatFoldPositions(model), model);
+  const { min, max } = weldedBounds(flat);
   const extent = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-6);
   return {
     scale: SCENE_EXTENT / extent,
@@ -311,8 +327,8 @@ export function foldSceneFrame(model: FoldModel) {
 
 /** Scene-space width/height of the flat dieline (top-down xz plane), for ortho fit. */
 export function flatSceneBounds(model: FoldModel): { width: number; height: number } {
-  const frame = foldSceneFrame(model);
-  const oriented = applyTransforms(flatFoldPositions(model), model.transforms);
+  const frame = foldSceneFrame(model, "flat-2d");
+  const oriented = orientedFor("flat-2d", flatFoldPositions(model), model);
   const xs = oriented.map((p) => (p[0] - frame.center[0]) * frame.scale);
   const zs = oriented.map((p) => (p[1] - frame.center[1]) * frame.scale);
   const width = Math.max(...xs) - Math.min(...xs) || 1;
@@ -353,9 +369,9 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       }
     : solveFoldTimeline(model, foldStepIndex, foldAngle);
   const foldPositions = projection === "flat-2d" ? flatFoldPositions(model) : timelineSolve.positions;
-  const oriented = applyTransforms(foldPositions, model.transforms);
+  const oriented = orientedFor(projection, foldPositions, model);
 
-  const frame = foldSceneFrame(model);
+  const frame = foldSceneFrame(model, projection);
   const [cx, cy, cz] = frame.center;
   // Remap fold (x, y, z) -> scene (x, z_fold-as-height, y). The flat 2D view is
   // seen top-down (-y), which flips one screen axis; negate the depth axis there so
@@ -1314,7 +1330,7 @@ export function updateFoldScenePositions(
   const foldPositions = projection === "flat-2d"
     ? flatFoldPositions(model)
     : timelineSolve.positions;
-  const oriented = applyTransforms(foldPositions, model.transforms);
+  const oriented = orientedFor(projection, foldPositions, model);
   const [cx, cy, cz] = frame.center;
   const depthSign = projection === "flat-2d" ? -1 : 1;
   const scenePositions: V3[] = oriented.map((point) => [
