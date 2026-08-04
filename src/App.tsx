@@ -19,6 +19,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type DragEvent,
 } from "react";
 import { packCadLogo } from "./assets/sourceChrome";
 import { Inspector } from "./components/Inspector";
@@ -99,6 +100,7 @@ export default function App() {
   const [saveState, setSaveState] = useState<ProjectSaveState>("saved");
   const [restoredDraftName, setRestoredDraftName] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
+  const [projectDragActive, setProjectDragActive] = useState(false);
   const [notice, setNotice] = useState("Ready");
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -129,6 +131,7 @@ export default function App() {
   const autosaveRef = useRef<ProjectAutosaveBinding | null>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const menuDielineInputRef = useRef<HTMLInputElement>(null);
+  const projectDragDepthRef = useRef(0);
   const autoplayEditorRef = useRef<typeof initialEditor | null>(null);
   const foldingPlayback = useFoldingPlayback(state.content);
   const sharedSettlement = useFoldSettlement(
@@ -376,6 +379,7 @@ export default function App() {
   }, [state.execute]);
 
   const openProjectFile = useCallback(async (file: File): Promise<void> => {
+    setImportNotice(null);
     try {
       await autosaveRef.current?.flush();
       const snapshot = projectFromFileText(await file.text());
@@ -389,6 +393,10 @@ export default function App() {
       setActiveDocument(identity);
       setSaveState("saved");
       setNotice(`Opened project: ${file.name}`);
+      setImportNotice({
+        kind: "success",
+        message: `Opened project: ${file.name}`,
+      });
       await refreshDrafts();
     } catch (error) {
       setImportNotice({
@@ -399,6 +407,63 @@ export default function App() {
       });
     }
   }, [refreshDrafts, replaceEditor]);
+
+  const handleProjectDragEnter = useCallback((
+    event: DragEvent<HTMLDivElement>,
+  ): void => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    projectDragDepthRef.current += 1;
+    setProjectDragActive(true);
+  }, []);
+
+  const handleProjectDragOver = useCallback((
+    event: DragEvent<HTMLDivElement>,
+  ): void => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleProjectDragLeave = useCallback((
+    event: DragEvent<HTMLDivElement>,
+  ): void => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    projectDragDepthRef.current = Math.max(
+      0,
+      projectDragDepthRef.current - 1,
+    );
+    if (projectDragDepthRef.current === 0) setProjectDragActive(false);
+  }, []);
+
+  const handleProjectDrop = useCallback((
+    event: DragEvent<HTMLDivElement>,
+  ): void => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    projectDragDepthRef.current = 0;
+    setProjectDragActive(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length !== 1) {
+      setImportNotice({
+        kind: "error",
+        message: files.length === 0
+          ? "Drop a PackCAD JSON project file."
+          : "Drop one PackCAD project at a time.",
+      });
+      return;
+    }
+    const [file] = files;
+    if (!file.name.toLowerCase().endsWith(".json")) {
+      setImportNotice({
+        kind: "error",
+        message: `Could not open ${file.name}: expected a JSON project file.`,
+      });
+      return;
+    }
+    void openProjectFile(file);
+  }, [openProjectFile]);
 
   const saveProjectFile = useCallback((): void => {
     downloadText(
@@ -659,6 +724,10 @@ export default function App() {
       }
       data-app="packcad-editable"
       onClick={() => setOpenMenu(null)}
+      onDragEnter={handleProjectDragEnter}
+      onDragOver={handleProjectDragOver}
+      onDragLeave={handleProjectDragLeave}
+      onDrop={handleProjectDrop}
     >
       <SourceSidebar
         project={state.content}
@@ -714,6 +783,15 @@ export default function App() {
       />
 
       <main className="workspace">
+        {projectDragActive ? (
+          <div className="project-drop-overlay" aria-hidden="true">
+            <div className="project-drop-card">
+              <Icon name="file-up" size={32} />
+              <strong>Drop to open in PackCAD</strong>
+              <span>PackCAD JSON project</span>
+            </div>
+          </div>
+        ) : null}
         <Topbar
           openMenu={openMenu}
           sidebarCollapsed={sidebarCollapsed}

@@ -578,6 +578,43 @@ footer a {
   min-height: 0;
 }
 
+.project-drop-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(24 24 27 / 28%);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.project-drop-card {
+  display: flex;
+  width: min(420px, 100%);
+  min-height: 210px;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #71717a;
+  border-radius: 16px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 22%);
+  color: #18181b;
+}
+
+.project-drop-card strong {
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+.project-drop-card span {
+  color: #71717a;
+  font-size: 12px;
+}
+
 .topbar {
   position: relative;
   z-index: 20;
