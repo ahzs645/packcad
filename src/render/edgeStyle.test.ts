@@ -37,6 +37,23 @@ describe("source edge appearance", () => {
     expect(SELECTED_EDGE_COLOR).toBe("#ffffff");
   });
 
+  it("colors active flat creases from their signed source fold angle", () => {
+    const [edgeKey, angle] = Object.entries(model.keyframes[0]?.creaseAnglesDeg ?? {})
+      .find(([, value]) => value !== 0) ?? [];
+    if (edgeKey === undefined || angle === undefined) {
+      throw new Error("MailerBox fixture is missing an active signed crease");
+    }
+    expect(resolveEdgeStyle(
+      model,
+      Number(edgeKey),
+      1,
+      "mountain-valley",
+      "flat-2d",
+      false,
+      false,
+    ).color).toBe(angle > 0 ? "#d93025" : "#2f6fed");
+  });
+
   it("does not recolor edges merely because their panel is fixed", () => {
     const lockedBoundary = model.edgesAssignment.findIndex((assignment, edgeIndex) =>
       assignment === "B"

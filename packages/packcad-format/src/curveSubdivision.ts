@@ -212,6 +212,47 @@ function edgeKey(a: number, b: number): string {
   return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
 
+function planarUvForPoint(model: FoldModel, point: Point): Point | null {
+  if (model.verticesUv.length !== model.verticesCoords.length) return null;
+  const result: Point = [0, 0];
+  for (const axis of [0, 1] as const) {
+    let minPosition = Infinity;
+    let maxPosition = -Infinity;
+    let minUv = Infinity;
+    let maxUv = -Infinity;
+    let covariance = 0;
+    let meanPosition = 0;
+    let meanUv = 0;
+    let count = 0;
+    for (let index = 0; index < model.verticesCoords.length; index += 1) {
+      const position = model.verticesCoords[index]?.[axis];
+      const uv = model.verticesUv[index]?.[axis];
+      if (!Number.isFinite(position) || !Number.isFinite(uv)) continue;
+      minPosition = Math.min(minPosition, position);
+      maxPosition = Math.max(maxPosition, position);
+      minUv = Math.min(minUv, uv);
+      maxUv = Math.max(maxUv, uv);
+      meanPosition += position;
+      meanUv += uv;
+      count += 1;
+    }
+    if (count < 2 || maxPosition <= minPosition || maxUv < minUv) return null;
+    meanPosition /= count;
+    meanUv /= count;
+    for (let index = 0; index < model.verticesCoords.length; index += 1) {
+      const position = model.verticesCoords[index]?.[axis];
+      const uv = model.verticesUv[index]?.[axis];
+      if (!Number.isFinite(position) || !Number.isFinite(uv)) continue;
+      covariance += (position - meanPosition) * (uv - meanUv);
+    }
+    const fraction = (point[axis] - minPosition) / (maxPosition - minPosition);
+    result[axis] = covariance >= 0
+      ? minUv + fraction * (maxUv - minUv)
+      : maxUv - fraction * (maxUv - minUv);
+  }
+  return result;
+}
+
 /**
  * Discretise every curved edge into straight pieces, rewriting vertices, edges,
  * face loops and the keyframes' crease targets to match. Straight edges and
@@ -247,7 +288,15 @@ export function subdivideCurvedEdges(model: FoldModel): FoldModel {
       chain.push(vertices.length);
       vertices.push([point[0], point[1]]);
       verticesIDs.push("");
-      if (verticesUv.length > 0) verticesUv.push([0, 0]);
+      if (verticesUv.length > 0) {
+        const projectedUv = planarUvForPoint(model, point);
+        const startUv = model.verticesUv[v0] ?? [0, 0];
+        const endUv = model.verticesUv[v1] ?? startUv;
+        verticesUv.push(projectedUv ?? [
+          startUv[0] + (endUv[0] - startUv[0]) * t,
+          startUv[1] + (endUv[1] - startUv[1]) * t,
+        ]);
+      }
     }
     chain.push(v1);
     chains.set(edge, chain);

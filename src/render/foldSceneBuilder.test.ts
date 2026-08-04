@@ -27,6 +27,25 @@ function disposeScene(scene: FoldSceneData): void {
 }
 
 describe("fold scene frame updates", () => {
+  it("renders the source-discretised pillow graph without re-smoothing flat curves", () => {
+    const project = createPillowBoxProject();
+    const model = project.foldModel;
+    if (!model) throw new Error("PillowBox fixture did not produce a fold model");
+    const scene = buildFoldScene({
+      model,
+      projection: "flat-2d",
+      foldStepIndex: 0,
+      foldAngle: 0,
+      thicknessMm: project.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+    });
+
+    expect(scene.segmentEdgeIndex.length).toBe(model.edgesVertices.length);
+    expect(new Set(scene.segmentEdgeIndex).size).toBe(model.edgesVertices.length);
+    disposeScene(scene);
+  });
+
   it("anchors restored pillow-box curves to their owning boundary triangles", () => {
     const model = createPillowBoxProject().foldModel;
     if (!model) throw new Error("PillowBox fixture did not produce a fold model");

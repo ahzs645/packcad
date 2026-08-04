@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BackSide, DoubleSide, FrontSide, Texture } from "three";
+import { BackSide, DoubleSide, FrontSide, MeshBasicMaterial, Texture } from "three";
 import {
   createMailerBoxProject,
   foldNewtonSequence,
@@ -12,6 +12,33 @@ import {
 } from "./foldSceneMaterials";
 
 describe("fold scene material groups", () => {
+  it("uses untinted, unlit, side-specific face maps in the 2D graph", () => {
+    const faceTexture = new Texture();
+    const materials = createFoldSceneMaterials({
+      viewMode: "2d",
+      technical: false,
+      showArtwork: false,
+      useFaceColors: false,
+      faceTexture,
+      frontArtworkTexture: null,
+      backArtworkTexture: null,
+      edgeTexture: null,
+      edgeFallbackColor: "#c8b394",
+    });
+
+    expect(materials.base[0]).toBeInstanceOf(MeshBasicMaterial);
+    expect(materials.base[1]).toBeInstanceOf(MeshBasicMaterial);
+    expect(materials.base[0].color.getHex()).toBe(0xffffff);
+    expect(materials.base[1].color.getHex()).toBe(0xffffff);
+    expect(materials.base[0].map).toBe(faceTexture);
+    expect(materials.base[1].map).toBe(faceTexture);
+    expect(materials.base[0].side).toBe(FrontSide);
+    expect(materials.base[1].side).toBe(BackSide);
+
+    for (const material of materials.base) material.dispose();
+    faceTexture.dispose();
+  });
+
   it("maps the settled default MailerBox shell to visible materials without GTAO", () => {
     const project = createMailerBoxProject();
     const model = project.foldModel;

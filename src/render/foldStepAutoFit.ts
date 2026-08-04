@@ -41,7 +41,7 @@ export function foldStepFitPadding(
 ): number {
   // PackCAD fills 90% of the limiting viewport axis when it recentres. Atelier
   // expresses the inverse of that fill factor as bounds-fit padding.
-  return viewMode === "2d" ? 1.08 : compact ? 1.55 : 1 / 0.9;
+  return viewMode === "2d" ? 1 / 0.9 : compact ? 1.55 : 1 / 0.9;
 }
 
 export function isSameFoldStepFrame(

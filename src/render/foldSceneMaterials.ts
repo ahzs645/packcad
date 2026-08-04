@@ -3,16 +3,17 @@ import {
   Color,
   DoubleSide,
   FrontSide,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   type Texture,
 } from "three";
 import type { ViewMode } from "@packcad/format";
 
 export type FoldSceneMaterials = [
-  front: MeshStandardMaterial,
-  back: MeshStandardMaterial,
-  edge: MeshStandardMaterial,
-  closedSeamCap: MeshStandardMaterial,
+  front: MeshStandardMaterial | MeshBasicMaterial,
+  back: MeshStandardMaterial | MeshBasicMaterial,
+  edge: MeshStandardMaterial | MeshBasicMaterial,
+  closedSeamCap: MeshStandardMaterial | MeshBasicMaterial,
 ];
 
 export type FoldSceneMaterialLayers = {
@@ -50,22 +51,36 @@ export function createFoldSceneMaterials({
   edgeTexture,
   edgeFallbackColor,
 }: FoldSceneMaterialOptions): FoldSceneMaterialLayers {
-  const baseFrontMaterial = new MeshStandardMaterial({
-    // The bitmap supplies fibre detail; the selected stock colour supplies the
-    // material tint. Multiplying textured faces by white washed chipboard and
-    // corrugated stock out compared with the source renderer.
-    color: new Color(technical ? "#f1f1f1" : edgeFallbackColor),
-    map: technical || useFaceColors ? null : faceTexture,
-    roughness: technical ? 0.96 : 0.9,
-    metalness: 0,
-    vertexColors: !technical && useFaceColors,
-    wireframe: technical,
-    side: technical || viewMode === "2d" ? DoubleSide : FrontSide,
-  });
+  const faceMap = technical || useFaceColors ? null : faceTexture;
+  // PackCAD composites the stock bitmap into a white albedo surface. Applying
+  // the catalog's beige swatch as a second multiplier darkens the exact same
+  // JPEG and is especially visible on chipboard.
+  const faceColor = new Color(
+    technical
+      ? "#f1f1f1"
+      : faceMap || useFaceColors
+        ? "#ffffff"
+        : edgeFallbackColor,
+  );
+  const baseFrontMaterial = viewMode === "2d"
+    ? new MeshBasicMaterial({
+        color: faceColor,
+        map: faceMap,
+        vertexColors: !technical && useFaceColors,
+        wireframe: technical,
+        side: FrontSide,
+      })
+    : new MeshStandardMaterial({
+        color: faceColor,
+        map: faceMap,
+        roughness: technical ? 0.96 : 0.9,
+        metalness: 0,
+        vertexColors: !technical && useFaceColors,
+        wireframe: technical,
+        side: FrontSide,
+      });
   const baseBackMaterial = baseFrontMaterial.clone();
-  if (!technical) {
-    baseBackMaterial.side = viewMode === "2d" ? DoubleSide : BackSide;
-  }
+  baseBackMaterial.side = BackSide;
   const cutEdgeColor = new Color(technical ? "#f1f1f1" : edgeFallbackColor);
   if (!technical && edgeTexture) {
     // The flute bitmap supplies the corrugation detail, while this warm, dark
@@ -114,24 +129,29 @@ export function createFoldSceneMaterials({
   // must remain visible beneath it. Rendering it as the only face map turned
   // those transparent pixels into a solid navy back face and exposed that
   // colour as a false strip along every cut edge.
-  const artworkFrontMaterial = new MeshStandardMaterial({
+  const artworkOptions = {
     color: "#ffffff",
     map: frontArtworkTexture,
-    roughness: 0.9,
-    metalness: 0,
     transparent: true,
     alphaTest: 0.01,
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -1,
     polygonOffsetUnits: -1,
-    side: viewMode === "2d" ? DoubleSide : FrontSide,
-  });
+    side: FrontSide,
+  } as const;
+  const artworkFrontMaterial = viewMode === "2d"
+    ? new MeshBasicMaterial(artworkOptions)
+    : new MeshStandardMaterial({
+        ...artworkOptions,
+        roughness: 0.9,
+        metalness: 0,
+      });
   const artworkBackMaterial = artworkFrontMaterial.clone();
   artworkBackMaterial.map = viewMode === "2d"
     ? frontArtworkTexture
     : backArtworkTexture;
-  artworkBackMaterial.side = viewMode === "2d" ? DoubleSide : BackSide;
+  artworkBackMaterial.side = BackSide;
   const hiddenArtworkEdgeMaterial = new MeshStandardMaterial({ visible: false });
   const artwork: FoldSceneMaterials = [
     artworkFrontMaterial,

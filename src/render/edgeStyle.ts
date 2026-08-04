@@ -14,7 +14,7 @@ export const BOUNDARY_EDGE_COLOR = "#050505";
 // imported creases pick up a muted warm/red guide colour, which stays visible
 // over both kraft stock and the red interior artwork without reading as a gap.
 export const SOURCE_3D_CREASE_COLOR = "#b66a61";
-export const SOURCE_2D_CREASE_COLOR = "#d4d4d8";
+export const SOURCE_2D_CREASE_COLOR = "#cccccc";
 export const HOVER_EDGE_COLOR = "#f59e0b";
 export const SELECTED_EDGE_COLOR = "#ffffff";
 
@@ -37,6 +37,21 @@ export type EdgeStyle = {
   /** higher = drawn later / on top. */
   renderTier: number;
 };
+
+function creaseAngleAtStep(
+  model: FoldModel,
+  edgeIndex: number,
+  foldStepIndex: number,
+): number {
+  let angle = 0;
+  for (let keyframeIndex = 0;
+    keyframeIndex < Math.min(foldStepIndex, model.keyframes.length);
+    keyframeIndex += 1) {
+    const candidate = model.keyframes[keyframeIndex]?.creaseAnglesDeg[edgeIndex];
+    if (candidate !== undefined) angle = candidate;
+  }
+  return angle;
+}
 
 /**
  * Resolve the appearance of a single fold edge. `hovered`/`selected` are passed
@@ -66,7 +81,11 @@ export function resolveEdgeStyle(
       : assignment === "U" || assignment === "F"
         ? presentation === "folded-3d"
           ? SOURCE_3D_CREASE_COLOR
-          : SOURCE_2D_CREASE_COLOR
+          : creaseAngleAtStep(model, edgeIndex, foldStepIndex) > 0
+            ? creaseColorForAssignment("M")
+            : creaseAngleAtStep(model, edgeIndex, foldStepIndex) < 0
+              ? creaseColorForAssignment("V")
+              : SOURCE_2D_CREASE_COLOR
         : creaseColorForAssignment(assignment);
   } else {
     color = BOUNDARY_EDGE_COLOR;

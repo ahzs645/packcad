@@ -90,7 +90,7 @@ export function ViewportWorkspace({
       backgroundColor={preferences.backgroundColor}
       compact={options.compact}
       interactive={options.interactive}
-      fitNonce={fitNonce}
+      fitNonce={options.compact ? 0 : fitNonce}
       thicknessOffsetDirection={thicknessOffsetDirection}
       fluteAngle={preferences.fluteAngle}
     />

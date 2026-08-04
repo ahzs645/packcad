@@ -43,7 +43,8 @@ describe("fold-step auto fit", () => {
   it("keeps compact 3D framing padded after settlement", () => {
     expect(foldStepFitPadding("3d", false)).toBeCloseTo(1 / 0.9, 12);
     expect(foldStepFitPadding("3d", true)).toBe(1.55);
-    expect(foldStepFitPadding("2d", true)).toBe(1.08);
+    expect(foldStepFitPadding("2d", true)).toBeCloseTo(1 / 0.9, 12);
+    expect(foldStepFitPadding("2d", false)).toBeCloseTo(1 / 0.9, 12);
   });
 
   it("refits a directly selected step once its settled positions arrive", () => {

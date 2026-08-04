@@ -571,7 +571,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   };
   const curvedEdgeRender = new Map<number, CurvedEdgeRender>();
   const curvedPatchFaceIndices: number[] = [];
-  model.edgeControlPoints?.forEach((controls, edgeIndex) => {
+  if (projection === "folded-3d") model.edgeControlPoints?.forEach((controls, edgeIndex) => {
     if (controls.length === 0) return;
     const adjacentFaces = model.edgeFaces[edgeIndex] ?? [];
     if (adjacentFaces.length !== 1) return;

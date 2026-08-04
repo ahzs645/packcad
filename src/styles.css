@@ -937,7 +937,8 @@ footer a {
   width: 192px;
   height: 144px;
   overflow: hidden;
-  border: 1px solid rgb(24 24 27 / 18%);
+  border: 0;
+  outline: 1px solid rgb(24 24 27 / 18%);
   border-radius: 0;
   padding: 0;
   background: #fbfbfb;
@@ -947,7 +948,7 @@ footer a {
 }
 
 .inset:hover {
-  border-color: rgb(24 24 27 / 42%);
+  outline-color: rgb(24 24 27 / 42%);
   box-shadow: 0 8px 24px rgb(0 0 0 / 15%);
 }
 
