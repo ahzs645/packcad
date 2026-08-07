@@ -14,6 +14,8 @@ export type FoldSceneMaterials = [
   back: MeshStandardMaterial | MeshBasicMaterial,
   edge: MeshStandardMaterial | MeshBasicMaterial,
   closedSeamCap: MeshStandardMaterial | MeshBasicMaterial,
+  frontBend: MeshStandardMaterial | MeshBasicMaterial,
+  backBend: MeshStandardMaterial | MeshBasicMaterial,
 ];
 
 export type FoldSceneMaterialLayers = {
@@ -81,44 +83,57 @@ export function createFoldSceneMaterials({
       });
   const baseBackMaterial = baseFrontMaterial.clone();
   baseBackMaterial.side = BackSide;
-  const cutEdgeColor = new Color(technical ? "#f1f1f1" : edgeFallbackColor);
-  if (!technical && edgeTexture) {
-    // The flute bitmap supplies the corrugation detail, while this warm, dark
-    // stock tint supplies the colour. A pale multiplier left a conspicuous
-    // beige ribbon above every red sidewall; the source renders those grazing
-    // cut edges as a narrow brown/red seam.
-    cutEdgeColor.lerp(new Color("#6e3428"), 0.72);
-  }
+  // PackCAD's GraphVisSideBand is an untinted white MeshStandardMaterial: the
+  // sideband bitmap alone supplies the kraft cut-surface colour. (Its earlier
+  // "dark brown seam" impression came from fold-hinge rims wrongly wearing this
+  // material — rims now wrap the face sheet instead.) The source also offsets
+  // the band behind the printed faces to avoid grazing-angle z-fighting; it can
+  // use FrontSide because its graph windings are normalized, while FOLD cut
+  // edges have no guaranteed orientation, so the band stays double-sided here.
+  const cutEdgeColor = new Color(
+    technical ? "#f1f1f1" : edgeTexture ? "#ffffff" : edgeFallbackColor,
+  );
   const baseEdgeMaterial = new MeshStandardMaterial({
-    // Tint the flute texture with the stock colour. Leaving textured edges
-    // pure white made exposed folds read as bright plastic bands, especially
-    // along the K4/K5 side walls, instead of the source's kraft cut surface.
     color: cutEdgeColor,
     map: technical ? null : edgeTexture,
     roughness: technical ? 0.96 : 1,
     metalness: 0,
     wireframe: technical,
     side: DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   });
   const closedSeamCapMaterial = new MeshStandardMaterial({
-    // A double-wall terminal is a broad exposed cross-section, unlike the
-    // grazing cut/crease strips above. Keep the flute detail but use natural
-    // kraft stock so the cap does not turn into a nearly black corner block.
-    color: new Color(
-      technical ? "#f1f1f1" : edgeTexture ? "#ffffff" : edgeFallbackColor,
-    ),
+    // A double-wall terminal rail is closed by one continuous cut face, same
+    // white-times-flute treatment as the individual sidebands.
+    color: cutEdgeColor.clone(),
     map: technical ? null : edgeTexture,
     roughness: technical ? 0.96 : 1,
     metalness: 0,
     wireframe: technical,
     side: DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   });
+
+  // PackCAD wraps the sheet itself around each fold hinge, so a bend shows the
+  // adjoining face's stock and print, not the cut-edge sideband. A bend's
+  // winding flips with the fold's mountain/valley direction, so unlike the
+  // sheets these stay double-sided.
+  const frontBendMaterial = baseFrontMaterial.clone();
+  frontBendMaterial.side = DoubleSide;
+  const backBendMaterial = baseBackMaterial.clone();
+  backBendMaterial.side = DoubleSide;
 
   const base: FoldSceneMaterials = [
     baseFrontMaterial,
     baseBackMaterial,
     baseEdgeMaterial,
     closedSeamCapMaterial,
+    frontBendMaterial,
+    backBendMaterial,
   ];
   if (technical || !showArtwork || !frontArtworkTexture) {
     return { base, artwork: null };
@@ -153,11 +168,19 @@ export function createFoldSceneMaterials({
     : backArtworkTexture;
   artworkBackMaterial.side = BackSide;
   const hiddenArtworkEdgeMaterial = new MeshStandardMaterial({ visible: false });
+  // Print wraps around a fold with the sheet, so bends carry their side's
+  // artwork too (double-sided for the same winding reason as the base bends).
+  const artworkFrontBendMaterial = artworkFrontMaterial.clone();
+  artworkFrontBendMaterial.side = DoubleSide;
+  const artworkBackBendMaterial = artworkBackMaterial.clone();
+  artworkBackBendMaterial.side = DoubleSide;
   const artwork: FoldSceneMaterials = [
     artworkFrontMaterial,
     artworkBackMaterial,
     hiddenArtworkEdgeMaterial,
     hiddenArtworkEdgeMaterial,
+    artworkFrontBendMaterial,
+    artworkBackBendMaterial,
   ];
 
   return { base, artwork };

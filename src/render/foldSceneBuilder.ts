@@ -17,6 +17,7 @@ import {
 } from "@packcad/fold-solver";
 import { panelColorForIndex, type EdgeColorMode, type PanelColorMode } from "./foldViewSettings";
 import { lockedFaceSet, resolveEdgeStyle } from "./edgeStyle";
+import { foldUnitsPerInch } from "./materialTexture";
 
 export type V3 = [number, number, number];
 const v3add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -147,7 +148,13 @@ const CREASE_LINE_SURFACE_OFFSET = 0.006; // line epsilon above the front slab s
 const LOCKED_TINT_OFFSET = 0.004; // tint sits under the lines, above the face
 const SELECTED_TINT_OFFSET = 0.005;
 const LOCKED_ICON_OFFSET = 0.012;
-const EDGE_UV_REPEAT_PER_SCENE_UNIT = 4.5;
+// PackCAD's sideband tile is four flutes of the stock's flute frequency; the
+// caller passes the physical tile width so cut-edge flutes stay in step with
+// the printed face corrugation. Default: E-flute, 7.5 flutes per inch.
+const DEFAULT_EDGE_TILE_SIZE_IN = 4 / 7.5;
+// PackCAD wraps every fold hinge with a bend-radius arc of this many segments
+// (BEND_RADIUS_NUM_SEGMENTS in the reference bundle).
+const HINGE_BEND_SEGMENTS = 10;
 const MAX_HINGE_MITER_RATIO = 2.5;
 const CURVED_EDGE_SEGMENTS = 12;
 const CLOSED_VERTICAL_SEAM_PAIR_DISTANCE = 0.19;
@@ -170,6 +177,8 @@ export type FoldSceneInput = {
   foldPositions?: V3[];
   foldMaxEdgeError?: number;
   foldMaxAngleErrorDeg?: number;
+  /** Physical inches per repeat of the cut-edge sideband texture. */
+  edgeTileSizeIn?: number;
 };
 
 export type FoldScenePositionInput = Pick<
@@ -201,6 +210,19 @@ type FoldVertexPositionRecipe =
       faceAIndex: number;
       faceBIndex: number;
       normalOffset: number;
+    }
+  | {
+      kind: "bend";
+      vertexIndex: number;
+      /** The hinge's other endpoint; the two span the rotation axis. */
+      otherVertexIndex: number;
+      faceAIndex: number;
+      faceBIndex: number;
+      /** A face-A vertex off the hinge; disambiguates the 180° wrap side. */
+      interiorVertexIndex: number;
+      normalOffset: number;
+      /** 0 = on face A's offset sheet, 1 = on face B's. */
+      bendT: number;
     };
 
 type FoldEdgePositionLayout = {
@@ -232,7 +254,7 @@ export type FoldSceneMeta = {
   cutEdgeIndexCount: number;
   edgeVertexCount: number;
   interiorFoldHingeCount: number;
-  foldHingeSidebandIndexCount: number;
+  foldHingeBendIndexCount: number;
   foldHingeCapIndexCount: number;
   /** Double-wall terminal corners closed by one continuous cut-face cap. */
   closedSeamEdgeCount: number;
@@ -246,7 +268,10 @@ export type FoldSceneMeta = {
 };
 
 export type FoldSceneData = {
-  /** Faces: indexed, groups front=0, back=1, edge=2. position/uv/color attrs. */
+  /**
+   * Faces: indexed; material groups front=0, back=1, cut edge=2, closed seam
+   * cap=3, front bend=4, back bend=5. position/uv/color attrs.
+   */
   geometry: BufferGeometry;
   /** triangle id (in full index order) -> source fold face index, -1 for cut edges. */
   faceIndexByTriangle: Int32Array;
@@ -289,6 +314,62 @@ function hingeMiterPoint(
   const length = v3len(displacement);
   if (length > maximumLength) displacement = v3scale(displacement, maximumLength / length);
   return v3add(base, displacement);
+}
+
+function rotateAboutAxis(v: V3, axis: V3, angle: number): V3 {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const cross = v3cross(axis, v);
+  const axial = v3dot(axis, v) * (1 - cos);
+  return [
+    v[0] * cos + cross[0] * sin + axis[0] * axial,
+    v[1] * cos + cross[1] * sin + axis[1] * axial,
+    v[2] * cos + cross[2] * sin + axis[2] * axial,
+  ];
+}
+
+/**
+ * A point on PackCAD's bend-radius arc: face A's offset sheet edge swept about
+ * the hinge line onto face B's. The sweep direction normally follows whichever
+ * rotation carries A's normal onto B's; at a 180° fold-over both directions do,
+ * so the arc bulges away from face A's interior — through the outside of the
+ * wrap — instead of collapsing to the miter's ambiguous bisector.
+ */
+function hingeBendPoint(
+  scenePositions: V3[],
+  faceNormals: V3[],
+  recipe: Extract<FoldVertexPositionRecipe, { kind: "bend" }>,
+): V3 {
+  const base = scenePositions[recipe.vertexIndex];
+  const normalA = faceNormals[recipe.faceAIndex];
+  const normalB = faceNormals[recipe.faceBIndex];
+  if (Math.abs(recipe.normalOffset) <= 1e-9) return base;
+  const axisRaw = v3sub(scenePositions[recipe.otherVertexIndex], base);
+  const axisLength = v3len(axisRaw);
+  if (axisLength <= 1e-9) {
+    return v3add(base, v3scale(normalA, recipe.normalOffset));
+  }
+  const axis = v3scale(axisRaw, 1 / axisLength);
+  const angle = Math.acos(Math.max(-1, Math.min(1, v3dot(normalA, normalB))));
+  if (angle < 1e-6) {
+    return v3add(base, v3scale(normalA, recipe.normalOffset));
+  }
+  const forward = rotateAboutAxis(normalA, axis, angle);
+  const backward = rotateAboutAxis(normalA, axis, -angle);
+  const forwardFit = v3dot(forward, normalB);
+  const backwardFit = v3dot(backward, normalB);
+  let direction: number;
+  if (Math.abs(forwardFit - backwardFit) > 1e-6) {
+    direction = forwardFit >= backwardFit ? 1 : -1;
+  } else {
+    // Antipodal normals: bulge away from face A's interior.
+    const interior = v3sub(scenePositions[recipe.interiorVertexIndex], base);
+    const inPlane = v3sub(interior, v3scale(axis, v3dot(axis, interior)));
+    const halfway = rotateAboutAxis(normalA, axis, Math.PI / 2);
+    direction = v3dot(halfway, inPlane) <= 0 ? 1 : -1;
+  }
+  const normal = rotateAboutAxis(normalA, axis, direction * angle * recipe.bendT);
+  return v3add(base, v3scale(normal, recipe.normalOffset));
 }
 
 /**
@@ -640,6 +721,15 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     position: positionAt(index),
     recipe: meshRecipes[index],
   });
+  // PackCAD tiles the sideband in the same physical inches as the printed
+  // face, so cut-edge flutes continue the face corrugation's pitch instead of
+  // stretching with the model's normalized extent.
+  const edgeTileSizeSceneUnits = Math.max(
+    (input.edgeTileSizeIn ?? DEFAULT_EDGE_TILE_SIZE_IN)
+      * frame.scale
+      * foldUnitsPerInch(model.coordinateUnit),
+    1e-6,
+  );
   const addEdgeQuad = (
     pVa: DynamicPoint,
     pVb: DynamicPoint,
@@ -648,141 +738,117 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     v0 = 0,
     v1 = 1,
     targetIndices = edgeIndices,
-  ) => {
-    const u1 = Math.max(
-      1,
-      v3len(v3sub(pVb.position, pVa.position)) * EDGE_UV_REPEAT_PER_SCENE_UNIT,
-    );
-    const a = pushVert(pVa.position, [0, v0], pVa.recipe);
+    uStart = 0,
+  ): number => {
+    const u1 = uStart
+      + v3len(v3sub(pVb.position, pVa.position)) / edgeTileSizeSceneUnits;
+    const a = pushVert(pVa.position, [uStart, v0], pVa.recipe);
     const b = pushVert(pVb.position, [u1, v0], pVb.recipe);
     const c = pushVert(cVb.position, [u1, v1], cVb.recipe);
-    const d = pushVert(cVa.position, [0, v1], cVa.recipe);
+    const d = pushVert(cVa.position, [uStart, v1], cVa.recipe);
     targetIndices.push(a, b, c, a, c, d);
+    return u1;
   };
-  const addHingeQuad = (
-    target: number[],
-    pVa: DynamicPoint,
-    pVb: DynamicPoint,
-    cVb: DynamicPoint,
-    cVa: DynamicPoint,
-    uvA: [number, number],
-    uvB: [number, number],
-    outward: V3,
-  ) => {
-    const a = pushVert(pVa.position, uvA, pVa.recipe);
-    const b = pushVert(pVb.position, uvB, pVb.recipe);
-    const c = pushVert(cVb.position, uvB, cVb.recipe);
-    const d = pushVert(cVa.position, uvA, cVa.recipe);
-    const normal = v3cross(
-      v3sub(pVb.position, pVa.position),
-      v3sub(cVb.position, pVa.position),
-    );
-    if (v3dot(normal, outward) >= 0) target.push(a, b, c, a, c, d);
-    else target.push(a, c, b, a, d, c);
-  };
-  const addMiteredHingeStrip = (
+  /**
+   * PackCAD's bend-radius wrap: sweep face A's offset sheet edge about the
+   * hinge line onto face B's in HINGE_BEND_SEGMENTS steps. Ring vertices are
+   * shared between segments so the arc shades smoothly, and every ring keeps
+   * the crease line's own face-atlas UV — the sheet's stock and print stretch
+   * around the fold exactly like the source, instead of sampling the sideband.
+   * Returns the pushed ring vertex indices for the end caps.
+   */
+  const addHingeBendStrip = (
     target: number[],
     va: number,
     vb: number,
     faceAIndex: number,
     faceBIndex: number,
-    faceAEdge: { va: number; vb: number },
-    faceBEdge: { va: number; vb: number },
+    interiorVertexIndex: number,
     offset: number,
-    normalA: V3,
-    normalB: V3,
-    outward: V3,
-  ) => {
-    if (Math.abs(offset) <= 1e-9) return;
-    const miterVa = hingeMiterPoint(scenePositions[va] as V3, normalA, normalB, offset);
-    const miterVb = hingeMiterPoint(scenePositions[vb] as V3, normalA, normalB, offset);
-    const miterVaPoint: DynamicPoint = {
-      position: miterVa,
-      recipe: {
-        kind: "miter",
-        vertexIndex: va,
+  ): { ringsA: number[]; ringsB: number[] } => {
+    if (Math.abs(offset) <= 1e-9) return { ringsA: [], ringsB: [] };
+    const bendPointAt = (
+      vertexIndex: number,
+      otherVertexIndex: number,
+      bendT: number,
+    ): DynamicPoint => {
+      const recipe: FoldVertexPositionRecipe = {
+        kind: "bend",
+        vertexIndex,
+        otherVertexIndex,
         faceAIndex,
         faceBIndex,
+        interiorVertexIndex,
         normalOffset: offset,
-      },
+        bendT,
+      };
+      return {
+        position: hingeBendPoint(scenePositions as V3[], faceNormals, recipe),
+        recipe,
+      };
     };
-    const miterVbPoint: DynamicPoint = {
-      position: miterVb,
-      recipe: {
-        kind: "miter",
-        vertexIndex: vb,
-        faceAIndex,
-        faceBIndex,
-        normalOffset: offset,
-      },
-    };
-    addHingeQuad(
-      target,
-      dynamicPointAt(faceAEdge.va),
-      dynamicPointAt(faceAEdge.vb),
-      miterVbPoint,
-      miterVaPoint,
-      uvOf(va), uvOf(vb), outward,
-    );
-    addHingeQuad(
-      target,
-      miterVaPoint,
-      miterVbPoint,
-      dynamicPointAt(faceBEdge.vb),
-      dynamicPointAt(faceBEdge.va),
-      uvOf(va), uvOf(vb), outward,
-    );
+    const uvA = uvOf(va);
+    const uvB = uvOf(vb);
+    const ringsA: number[] = [];
+    const ringsB: number[] = [];
+    for (let ring = 0; ring <= HINGE_BEND_SEGMENTS; ring += 1) {
+      const t = ring / HINGE_BEND_SEGMENTS;
+      const pointA = bendPointAt(va, vb, t);
+      const pointB = bendPointAt(vb, va, t);
+      ringsA.push(pushVert(pointA.position, uvA, pointA.recipe));
+      ringsB.push(pushVert(pointB.position, uvB, pointB.recipe));
+    }
+    // The bend's winding flips with the fold's mountain/valley direction; its
+    // material is double-sided (three.js flips normals per fragment), so a
+    // fixed triangle order is safe.
+    for (let ring = 0; ring < HINGE_BEND_SEGMENTS; ring += 1) {
+      const a = ringsA[ring];
+      const b = ringsB[ring];
+      const c = ringsB[ring + 1];
+      const d = ringsA[ring + 1];
+      target.push(a, b, c, a, c, d);
+    }
+    return { ringsA, ringsB };
   };
-  const addMiteredHingeCap = (
+  /**
+   * Close a hinge's exposed cross-section at a boundary endpoint: fan across
+   * the crescent between the front and back bend arcs. This is a genuine cut
+   * face, so it keeps the sideband material like the source's board edge.
+   */
+  const addHingeBendCap = (
     vertex: number,
+    otherVertex: number,
     faceAIndex: number,
     faceBIndex: number,
-    A: typeof faceData[number],
-    B: typeof faceData[number],
+    interiorVertexIndex: number,
   ) => {
-    const base = scenePositions[vertex] as V3;
-    const capPoints: DynamicPoint[] = [
-      {
-        position: v3add(base, v3scale(A.nrm, fOff)),
-        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceAIndex, normalOffset: fOff },
-      },
-      {
-        position: hingeMiterPoint(base, A.nrm, B.nrm, fOff),
-        recipe: {
-          kind: "miter",
-          vertexIndex: vertex,
-          faceAIndex,
-          faceBIndex,
-          normalOffset: fOff,
-        },
-      },
-      {
-        position: v3add(base, v3scale(B.nrm, fOff)),
-        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceBIndex, normalOffset: fOff },
-      },
-      {
-        position: v3add(base, v3scale(B.nrm, bOff)),
-        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceBIndex, normalOffset: bOff },
-      },
-      {
-        position: hingeMiterPoint(base, A.nrm, B.nrm, bOff),
-        recipe: {
-          kind: "miter",
-          vertexIndex: vertex,
-          faceAIndex,
-          faceBIndex,
-          normalOffset: bOff,
-        },
-      },
-      {
-        position: v3add(base, v3scale(A.nrm, bOff)),
-        recipe: { kind: "face", vertexIndex: vertex, faceIndex: faceAIndex, normalOffset: bOff },
-      },
-    ];
-    const capVertices = capPoints.map((point, index) =>
+    const outline: DynamicPoint[] = [];
+    const ringPoint = (offset: number, bendT: number): DynamicPoint => {
+      const recipe: FoldVertexPositionRecipe = {
+        kind: "bend",
+        vertexIndex: vertex,
+        otherVertexIndex: otherVertex,
+        faceAIndex,
+        faceBIndex,
+        interiorVertexIndex,
+        normalOffset: offset,
+        bendT,
+      };
+      return {
+        position: hingeBendPoint(scenePositions as V3[], faceNormals, recipe),
+        recipe,
+      };
+    };
+    for (let ring = 0; ring <= HINGE_BEND_SEGMENTS; ring += 1) {
+      outline.push(ringPoint(fOff, ring / HINGE_BEND_SEGMENTS));
+    }
+    for (let ring = HINGE_BEND_SEGMENTS; ring >= 0; ring -= 1) {
+      outline.push(ringPoint(bOff, ring / HINGE_BEND_SEGMENTS));
+    }
+    const capVertices = outline.map((point, index) =>
       pushVert(
         point.position,
-        [index / Math.max(1, capPoints.length - 1), index === 0 ? 0 : 1],
+        [index / Math.max(1, outline.length - 1), index === 0 ? 0 : 1],
         point.recipe,
       ));
     for (let index = 1; index < capVertices.length - 1; index += 1) {
@@ -867,12 +933,19 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         const A = faceData[fcs[0]];
         const curved = curvedEdgeRender.get(ei);
         if (curved) {
+          // One continuous flute run along the sampled curve: each segment
+          // continues the previous segment's U so the tile never restarts.
+          let uCursor = 0;
           for (let segment = 0; segment + 1 < curved.frontIndices.length; segment += 1) {
-            addEdgeQuad(
+            uCursor = addEdgeQuad(
               dynamicPointAt(curved.frontIndices[segment]),
               dynamicPointAt(curved.frontIndices[segment + 1]),
               dynamicPointAt(curved.backIndices[segment + 1]),
               dynamicPointAt(curved.backIndices[segment]),
+              0,
+              1,
+              edgeIndices,
+              uCursor,
             );
           }
           return;
@@ -887,39 +960,27 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       } else if (fcs.length === 2) {
         if (model.edgesAssignment[ei] === "B") return;
         interiorFoldHingeCount += 1;
-        const A = faceData[fcs[0]];
-        const B = faceData[fcs[1]];
-        const outward = v3norm(v3add(A.nrm, B.nrm));
-        const hingeOutward = v3len(outward) > 1e-6 ? outward : A.nrm;
-        // PackCAD's bend-radius bridge reads as a warm compressed-board seam,
-        // not an unprinted white face. We still build the front/back bridge
-        // independently, but group both narrow strips with the edge material
-        // below so artwork transparency cannot turn a folded hinge white.
-        addMiteredHingeStrip(
+        const loopA = model.facesVertices[fcs[0]];
+        const interiorVertexIndex = loopA.find(
+          (vertex) => vertex !== va && vertex !== vb,
+        ) ?? va;
+        addHingeBendStrip(
           frontHingeIndices,
           va,
           vb,
           fcs[0],
           fcs[1],
-          { va: A.front.get(va)!, vb: A.front.get(vb)! },
-          { va: B.front.get(va)!, vb: B.front.get(vb)! },
+          interiorVertexIndex,
           fOff,
-          A.nrm,
-          B.nrm,
-          hingeOutward,
         );
-        addMiteredHingeStrip(
+        addHingeBendStrip(
           backHingeIndices,
           va,
           vb,
           fcs[0],
           fcs[1],
-          { va: A.back.get(va)!, vb: A.back.get(vb)! },
-          { va: B.back.get(va)!, vb: B.back.get(vb)! },
+          interiorVertexIndex,
           bOff,
-          A.nrm,
-          B.nrm,
-          hingeOutward,
         );
         // At a crease endpoint on the cut boundary, close only the wedge made
         // by the two faces adjacent to THIS crease. The old vertex-wide fan
@@ -928,7 +989,13 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         for (const vertex of [va, vb]) {
           if (!boundaryVertices.has(vertex)) continue;
           const before = edgeIndices.length;
-          addMiteredHingeCap(vertex, fcs[0], fcs[1], A, B);
+          addHingeBendCap(
+            vertex,
+            vertex === va ? vb : va,
+            fcs[0],
+            fcs[1],
+            interiorVertexIndex,
+          );
           foldHingeCapIndexCount += edgeIndices.length - before;
         }
       }
@@ -1186,19 +1253,20 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   geometry.clearGroups();
-  const frontGroupCount = frontIndices.length;
-  const backGroupCount = backIndices.length;
-  const edgeGroupCount = frontHingeIndices.length + backHingeIndices.length + edgeIndices.length;
-  geometry.addGroup(0, frontGroupCount, 0);
-  geometry.addGroup(frontGroupCount, backGroupCount, 1);
-  geometry.addGroup(frontGroupCount + backGroupCount, edgeGroupCount, 2);
-  if (closedSeamCapIndices.length > 0) {
-    geometry.addGroup(
-      frontGroupCount + backGroupCount + edgeGroupCount,
-      closedSeamCapIndices.length,
-      3,
-    );
-  }
+  // Material slots: 0 front sheet, 1 back sheet, 2 cut-edge sideband, 3 closed
+  // seam cap, 4 front bend wrap, 5 back bend wrap. Bends wear their sheet's
+  // stock and artwork (double-sided), matching the source's wrapped hinges.
+  let groupStart = 0;
+  const appendGroup = (count: number, materialIndex: number) => {
+    if (count > 0) geometry.addGroup(groupStart, count, materialIndex);
+    groupStart += count;
+  };
+  appendGroup(frontIndices.length, 0);
+  appendGroup(backIndices.length, 1);
+  appendGroup(frontHingeIndices.length, 4);
+  appendGroup(backHingeIndices.length, 5);
+  appendGroup(edgeIndices.length, 2);
+  appendGroup(closedSeamCapIndices.length, 3);
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   const box = geometry.boundingBox!;
@@ -1245,7 +1313,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       cutEdgeIndexCount: edgeIndices.length + closedSeamCapIndices.length,
       edgeVertexCount: next - edgeVertexStart,
       interiorFoldHingeCount,
-      foldHingeSidebandIndexCount: frontHingeIndices.length + backHingeIndices.length,
+      foldHingeBendIndexCount: frontHingeIndices.length + backHingeIndices.length,
       foldHingeCapIndexCount,
       closedSeamEdgeCount: replacedClosedSeamSidebandEdges.size / 2,
       closedSeamCapIndexCount: closedSeamCapIndices.length,
@@ -1275,6 +1343,13 @@ function writeRecipePosition(
   scenePositions: V3[],
   faceNormals: V3[],
 ): void {
+  if (recipe.kind === "bend") {
+    const point = hingeBendPoint(scenePositions, faceNormals, recipe);
+    target[offset] = point[0];
+    target[offset + 1] = point[1];
+    target[offset + 2] = point[2];
+    return;
+  }
   const base = recipe.kind === "facePoint"
     ? weightedV3(scenePositions, recipe.vertexIndices, recipe.weights)
     : scenePositions[recipe.vertexIndex];

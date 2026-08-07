@@ -91,6 +91,7 @@ import {
 import {
   configureMaterialTexture,
   materialTextureRepeat,
+  sidebandTileSizeIn,
 } from "../render/materialTexture";
 
 const SOURCE_3D_CUT_LINE_WIDTH = 1.5;
@@ -465,10 +466,10 @@ export function ViewportPane({
     configureMaterialTexture(texture);
     texture.center.set(0.5, 0.5);
     texture.rotation = (fluteAngle * Math.PI) / 180;
-    texture.repeat.set(
-      Math.max(1, (specification?.fluteFrequencyPerIn ?? 0) / 7.5),
-      1,
-    );
+    // The fold scene's edge UVs count physical sideband tiles (the stock's
+    // flute frequency is already in edgeTileSizeIn), so the texture itself
+    // never re-scales.
+    texture.repeat.set(1, 1);
     texture.needsUpdate = true;
     return () => {
       cancelled = true;
@@ -545,6 +546,16 @@ export function ViewportPane({
     },
     [placedBackArtworkTexture, placedFrontArtworkTexture],
   );
+
+  const edgeTileSizeIn = useMemo(() => {
+    const specification = materialCatalog[project.materialSpec];
+    return sidebandTileSizeIn({
+      corrugated: specification?.group === "corrugated"
+        || project.material === "corrugated"
+        || project.material === "flute",
+      fluteFrequencyPerIn: specification?.fluteFrequencyPerIn,
+    });
+  }, [project.material, project.materialSpec]);
 
   const foldSceneMaterials = useMemo(() => {
     const materialDefinition = materials[project.material];
@@ -850,6 +861,7 @@ export function ViewportPane({
       foldPositions: positionInput.foldPositions,
       foldMaxEdgeError: positionInput.foldMaxEdgeError,
       foldMaxAngleErrorDeg: positionInput.foldMaxAngleErrorDeg,
+      edgeTileSizeIn,
     });
     sceneDataRef.current = data;
 
@@ -1111,6 +1123,7 @@ export function ViewportPane({
   }, [
     compact,
     edgeColorMode,
+    edgeTileSizeIn,
     foldStepIndex,
     foldSceneMaterials,
     interactive,

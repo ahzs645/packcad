@@ -148,6 +148,38 @@ describe("fold scene frame updates", () => {
     disposeScene(selected);
   });
 
+  it("wraps every fold hinge with a finite bend-radius arc", () => {
+    const project = createMailerBoxProject();
+    const model = project.foldModel;
+    if (!model) throw new Error("MailerBox fixture did not produce a fold model");
+    const scene = buildFoldScene({
+      model,
+      projection: "folded-3d",
+      foldStepIndex: 5,
+      foldAngle: 90,
+      thicknessMm: project.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+    });
+
+    // Ten arc segments per hinge per non-degenerate sheet offset (this fixture
+    // extrudes inward only, so exactly one offset per hinge), six indices each.
+    expect(scene.meta.interiorFoldHingeCount).toBeGreaterThan(0);
+    expect(scene.meta.foldHingeBendIndexCount).toBe(
+      scene.meta.interiorFoldHingeCount * 10 * 6,
+    );
+    // The 180-degree K4 fold-over rails exercise the antipodal-normal branch;
+    // every generated position must stay finite (the old miter bisector was
+    // numerically unstable there and left the rail open).
+    const positions = scene.geometry.getAttribute("position").array as Float32Array;
+    let finite = true;
+    for (let index = 0; index < positions.length; index += 1) {
+      if (!Number.isFinite(positions[index])) { finite = false; break; }
+    }
+    expect(finite).toBe(true);
+    disposeScene(scene);
+  });
+
   it("renders one cut-edge band at each fully folded K5 corner", () => {
     const project = createMailerBoxProject();
     const model = project.foldModel;

@@ -10,6 +10,7 @@ import {
 const SVG_POINTS_PER_INCH = 72;
 const PAPERBOARD_TILE_SIZE_IN = 2;
 const CORRUGATED_TEXTURE_FLUTES = 20;
+const CORRUGATED_SIDEBAND_TEXTURE_FLUTES = 4;
 const DEFAULT_CORRUGATED_FLUTES_PER_IN = 7.5;
 const FALLBACK_REPEAT = 2;
 
@@ -29,7 +30,7 @@ export function configureMaterialTexture(texture: Texture): Texture {
   return texture;
 }
 
-function foldUnitsPerInch(coordinateUnit: string): number {
+export function foldUnitsPerInch(coordinateUnit: string): number {
   switch (coordinateUnit.toLowerCase()) {
     case "px":
     case "pt":
@@ -77,6 +78,20 @@ function axisRepeat(
  * two-inch tiles, while corrugated stock spans twenty flutes per source image.
  * The returned repeat is expressed in the imported FOLD UV atlas.
  */
+/**
+ * Physical width, in inches, of one repeat of the exposed cut-edge texture.
+ * PackCAD's sideband JPEG holds four flutes, so its tile width follows the
+ * stock's flute frequency; uncorrugated stock reuses its two-inch face tile.
+ */
+export function sidebandTileSizeIn(options: {
+  corrugated: boolean;
+  fluteFrequencyPerIn?: number;
+}): number {
+  if (!options.corrugated) return PAPERBOARD_TILE_SIZE_IN;
+  return CORRUGATED_SIDEBAND_TEXTURE_FLUTES
+    / Math.max(options.fluteFrequencyPerIn ?? DEFAULT_CORRUGATED_FLUTES_PER_IN, 0.001);
+}
+
 export function materialTextureRepeat(
   model: FoldModel | null | undefined,
   options: {

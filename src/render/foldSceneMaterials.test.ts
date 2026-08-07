@@ -83,36 +83,54 @@ describe("fold scene material groups", () => {
 
     expect(settled.isSolved).toBe(true);
     expect(scene.timelineSolve.method).toBe("source-iterative");
-    expect(scene.geometry.groups.map((group) => group.materialIndex)).toEqual([0, 1, 2, 3]);
+    // Sheets, then their bend wraps, then cut sidebands and seam caps. The
+    // MailerBox extrudes its thickness inward only (front offset 0), so its
+    // exterior bend arcs are degenerate and that group is skipped.
+    expect(scene.geometry.groups.map((group) => group.materialIndex))
+      .toEqual([0, 1, 5, 2, 3]);
     expect(scene.geometry.groups.every((group) => group.count > 0)).toBe(true);
-    expect(scene.geometry.groups[2].count).toBe(
-      scene.meta.cutEdgeIndexCount
-        - scene.meta.closedSeamCapIndexCount
-        + scene.meta.foldHingeSidebandIndexCount,
+    const edgeGroup = scene.geometry.groups.find((group) => group.materialIndex === 2);
+    const capGroup = scene.geometry.groups.find((group) => group.materialIndex === 3);
+    const bendCount = scene.geometry.groups
+      .filter((group) => group.materialIndex === 4 || group.materialIndex === 5)
+      .reduce((sum, group) => sum + group.count, 0);
+    expect(edgeGroup?.count).toBe(
+      scene.meta.cutEdgeIndexCount - scene.meta.closedSeamCapIndexCount,
     );
-    expect(scene.geometry.groups[3].count).toBe(scene.meta.closedSeamCapIndexCount);
+    expect(capGroup?.count).toBe(scene.meta.closedSeamCapIndexCount);
+    expect(bendCount).toBe(scene.meta.foldHingeBendIndexCount);
     expect(materials.base.map((material) => material.map)).toEqual([
       faceTexture,
       faceTexture,
       edgeTexture,
       edgeTexture,
+      faceTexture,
+      faceTexture,
     ]);
     expect(materials.base.map((material) => material.side)).toEqual([
       FrontSide,
       BackSide,
       DoubleSide,
       DoubleSide,
+      DoubleSide,
+      DoubleSide,
     ]);
-    expect(materials.base[2].color.r).toBeLessThan(materials.base[0].color.r);
-    expect(materials.base[2].color.r).toBeGreaterThan(materials.base[2].color.g);
-    expect(materials.base[2].color.g).toBeGreaterThan(materials.base[2].color.b);
-    expect(materials.base[3].color.getHSL({ h: 0, s: 0, l: 0 }).l)
-      .toBeGreaterThan(materials.base[2].color.getHSL({ h: 0, s: 0, l: 0 }).l);
+    // The source's sideband is untinted white: the flute bitmap alone supplies
+    // the kraft colour, and the seam cap matches it.
+    expect(materials.base[2].color.getHex()).toBe(0xffffff);
+    expect(materials.base[3].color.getHex()).toBe(0xffffff);
+    // Bend wraps continue their sheet's stock colour so a fold never shows the
+    // cut-edge texture.
+    expect(materials.base[4].color.getHex()).toBe(materials.base[0].color.getHex());
+    expect(materials.base[5].color.getHex()).toBe(materials.base[1].color.getHex());
+    expect(materials.base[2].polygonOffset).toBe(true);
     expect(materials.artwork?.map((material) => material.map)).toEqual([
       frontTexture,
       backTexture,
       null,
       null,
+      frontTexture,
+      backTexture,
     ]);
     expect(materials.artwork?.slice(0, 2).every((material) =>
       material.transparent && material.depthWrite === false && material.alphaTest > 0
