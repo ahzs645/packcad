@@ -9,7 +9,6 @@ import {
   DirectionalLight,
   DoubleSide,
   Float32BufferAttribute,
-  GreaterDepth,
   GridHelper,
   Group,
   LinearFilter,
@@ -94,10 +93,15 @@ import {
   sidebandTileSizeIn,
 } from "../render/materialTexture";
 
-const SOURCE_3D_CUT_LINE_WIDTH = 1.5;
-const SOURCE_3D_CREASE_LINE_WIDTH = 1;
+// PackCAD draws every fold-view line through one material family whose
+// GRAPH_EDGE_THICKNESS is 2, in the 2D dieline and the 3D fold view alike.
+const SOURCE_3D_CUT_LINE_WIDTH = 2;
+const SOURCE_3D_CREASE_LINE_WIDTH = 2;
 const SOURCE_2D_CUT_LINE_WIDTH = 2;
 const SOURCE_2D_CREASE_LINE_WIDTH = 2;
+// PackCAD's graphEdgesTransparencyPass3D re-renders the whole edge layer with
+// depth testing disabled at MESH_EDGE_OCCLUSION_OPACITY = 0.1, so every cut
+// and crease ghosts faintly through the shell in all shading modes.
 const SOURCE_OCCLUDED_EDGE_OPACITY = 0.1;
 
 interface ViewportPaneProps {
@@ -354,7 +358,7 @@ export function ViewportPane({
   const solidEdgesRef = useRef<FatEdges | null>(null);
   const creaseEdgesRef = useRef<FatEdges | null>(null);
   const dashedEdgesRef = useRef<FatEdges | null>(null);
-  const occludedSolidEdgesRef = useRef<FatEdges | null>(null);
+  const ghostEdgesRef = useRef<FatEdges[]>([]);
   const autoFitRef = useRef<FoldStepFrame | null>(null);
   const settledAutoFitRef = useRef<SettledFoldStepAutoFit | null>(null);
   const onSelectFaceRef = useRef(onSelectFace);
@@ -713,10 +717,10 @@ export function ViewportPane({
     updateFatEdgePositions(solidEdgesRef.current, data.solidEdgeGeometry);
     updateFatEdgePositions(creaseEdgesRef.current, data.creaseEdgeGeometry);
     updateFatEdgePositions(dashedEdgesRef.current, data.dashedEdgeGeometry);
-    updateFatEdgePositions(
-      occludedSolidEdgesRef.current,
-      data.solidEdgeGeometry,
-    );
+    const [ghostSolid, ghostCrease, ghostDashed] = ghostEdgesRef.current;
+    updateFatEdgePositions(ghostSolid ?? null, data.solidEdgeGeometry);
+    updateFatEdgePositions(ghostCrease ?? null, data.creaseEdgeGeometry);
+    updateFatEdgePositions(ghostDashed ?? null, data.dashedEdgeGeometry);
     updateFatEdgePositionArray(
       selectedLineRef.current,
       selectedFoldEdgeIndexRef.current === null
@@ -897,22 +901,37 @@ export function ViewportPane({
       linewidth: creaseLineWidth,
       depthTest: viewMode !== "2d",
     });
-    // X-ray only true cut boundaries. Replaying hidden crease geometry through
-    // a fully folded panel creates ghost diagonals and doubled seams that move
-    // with perspective, even though those creases are internal construction.
-    const occludedSolidEdges = viewMode === "3d" && project.renderMode === "technical"
-      ? createFatEdges(data.solidEdgeGeometry, viewport, {
-          linewidth: Math.min(cutLineWidth, 1),
-          depthTest: true,
-          depthFunc: GreaterDepth,
-          opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
-          renderOrder: 2,
-        })
-      : null;
+    // PackCAD's graphEdgesTransparencyPass3D: after the visible edges render,
+    // the same edge layer draws again without depth testing at 10% opacity,
+    // ghosting occluded cuts and creases through the shell. This runs in every
+    // 3D shading mode, not just technical.
+    const ghostEdges = viewMode === "3d"
+      ? [
+          createFatEdges(data.solidEdgeGeometry, viewport, {
+            linewidth: cutLineWidth,
+            depthTest: false,
+            opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
+            renderOrder: 4,
+          }),
+          createFatEdges(data.creaseEdgeGeometry, viewport, {
+            linewidth: creaseLineWidth,
+            depthTest: false,
+            opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
+            renderOrder: 4,
+          }),
+          createFatEdges(data.dashedEdgeGeometry, viewport, {
+            dashed: true,
+            linewidth: creaseLineWidth,
+            depthTest: false,
+            opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
+            renderOrder: 4,
+          }),
+        ]
+      : [];
     solidEdgesRef.current = solidEdges;
     creaseEdgesRef.current = creaseEdges;
     dashedEdgesRef.current = dashedEdges;
-    occludedSolidEdgesRef.current = occludedSolidEdges;
+    ghostEdgesRef.current = ghostEdges;
     const updateDashScale = (): void => {
       if (viewMode !== "2d") return;
       const zoom = viewport.camera.getState().zoom;
@@ -1005,7 +1024,7 @@ export function ViewportPane({
     if (lockedTintMesh) group.add(lockedTintMesh);
     if (lockedIconPoints) group.add(lockedIconPoints);
     if (selectedTintMesh) group.add(selectedTintMesh);
-    if (occludedSolidEdges) group.add(occludedSolidEdges.line);
+    for (const ghost of ghostEdges) group.add(ghost.line);
     group.add(
       solidEdges.line,
       creaseEdges.line,
@@ -1018,7 +1037,7 @@ export function ViewportPane({
       solidEdges,
       creaseEdges,
       dashedEdges,
-      occludedSolidEdges,
+      ...ghostEdges,
       selectedLine,
       hoverLine,
     ];
@@ -1083,9 +1102,7 @@ export function ViewportPane({
       if (solidEdgesRef.current === solidEdges) solidEdgesRef.current = null;
       if (creaseEdgesRef.current === creaseEdges) creaseEdgesRef.current = null;
       if (dashedEdgesRef.current === dashedEdges) dashedEdgesRef.current = null;
-      if (occludedSolidEdgesRef.current === occludedSolidEdges) {
-        occludedSolidEdgesRef.current = null;
-      }
+      if (ghostEdgesRef.current === ghostEdges) ghostEdgesRef.current = [];
       if (interactive) {
         viewport.picking.unregister(mesh);
         viewport.picking.unregister(edgePickLines);
@@ -1103,8 +1120,10 @@ export function ViewportPane({
       creaseEdges.material.dispose();
       dashedEdges.geometry.dispose();
       dashedEdges.material.dispose();
-      occludedSolidEdges?.geometry.dispose();
-      occludedSolidEdges?.material.dispose();
+      for (const ghost of ghostEdges) {
+        ghost.geometry.dispose();
+        ghost.material.dispose();
+      }
       edgePickMaterial.dispose();
       selectedLine.geometry.dispose();
       selectedLine.material.dispose();

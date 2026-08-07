@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { LocalDocumentMetadata } from "@atelier/core";
 import type { CameraProjection } from "@packcad/format";
 import type {
@@ -12,23 +13,17 @@ import {
 } from "../render/foldViewSettings";
 import { Icon } from "./Icon";
 
-export type OpenMenu = "file" | "edit" | "view" | null;
+export type OpenMenu = "file" | "view" | null;
 
 interface TopbarProps {
   openMenu: OpenMenu;
-  sidebarCollapsed: boolean;
   inspectorOpen: boolean;
-  canUndo: boolean;
-  canRedo: boolean;
-  undoLabel: string | null;
-  redoLabel: string | null;
   saveState: ProjectSaveState;
   drafts: LocalDocumentMetadata[];
   activeDocumentId: string;
   preferences: UiPreferences;
   projection: CameraProjection;
   onSetOpenMenu: (menu: OpenMenu) => void;
-  onToggleSidebar: () => void;
   onOpenPreferences: () => void;
   onToggleInspector: () => void;
   onNewProject: () => void;
@@ -43,8 +38,6 @@ interface TopbarProps {
   onExport: (
     format: "svg" | "gltf" | "dxf" | "hpgl" | "pdf" | "png",
   ) => void;
-  onUndo: () => void;
-  onRedo: () => void;
   onSetViewLayout: (layout: ViewLayout) => void;
   onUpdatePreferences: (patch: Partial<UiPreferences>) => void;
   onSetProjection: (projection: CameraProjection) => void;
@@ -52,19 +45,13 @@ interface TopbarProps {
 
 export function Topbar({
   openMenu,
-  sidebarCollapsed,
   inspectorOpen,
-  canUndo,
-  canRedo,
-  undoLabel,
-  redoLabel,
   saveState,
   drafts,
   activeDocumentId,
   preferences,
   projection,
   onSetOpenMenu,
-  onToggleSidebar,
   onOpenPreferences,
   onToggleInspector,
   onNewProject,
@@ -77,12 +64,16 @@ export function Topbar({
   onOpenDraft,
   onDeleteDraft,
   onExport,
-  onUndo,
-  onRedo,
   onSetViewLayout,
   onUpdatePreferences,
   onSetProjection,
 }: TopbarProps) {
+  type ViewSubmenu = "layout" | "panel-color" | "edge-color" | "projection";
+  const [openSubmenu, setOpenSubmenu] = useState<ViewSubmenu | null>(null);
+  useEffect(() => {
+    if (openMenu !== "view") setOpenSubmenu(null);
+  }, [openMenu]);
+
   const toggleMenu = (menu: Exclude<OpenMenu, null>): void => {
     onSetOpenMenu(openMenu === menu ? null : menu);
   };
@@ -90,19 +81,15 @@ export function Topbar({
     run();
     onSetOpenMenu(null);
   };
+  const submenuClass = (submenu: ViewSubmenu): string =>
+    openSubmenu === submenu ? "menu-submenu open" : "menu-submenu";
+  const toggleSubmenu = (submenu: ViewSubmenu): void => {
+    setOpenSubmenu((current) => (current === submenu ? null : submenu));
+  };
 
   return (
     <header className="topbar">
       <div className="menu-group" onClick={(event) => event.stopPropagation()}>
-        <button
-          type="button"
-          className={sidebarCollapsed ? "icon-button" : "icon-button selected"}
-          aria-label="Toggle Sidebar"
-          title="Toggle Sidebar"
-          onClick={onToggleSidebar}
-        >
-          <Icon name="panel-left" size={16} />
-        </button>
         <button
           type="button"
           className="icon-button"
@@ -110,16 +97,7 @@ export function Topbar({
           title="Preferences"
           onClick={onOpenPreferences}
         >
-          <Icon name="settings" size={16} />
-        </button>
-        <button
-          type="button"
-          className={inspectorOpen ? "icon-button selected" : "icon-button"}
-          aria-label="Toggle Inspector"
-          title="Toggle Inspector"
-          onClick={onToggleInspector}
-        >
-          <Icon name="panel-right" size={16} />
+          <Icon name="settings-2" size={16} />
         </button>
 
         <div className="menu-host">
@@ -213,42 +191,6 @@ export function Topbar({
             type="button"
             role="menuitem"
             aria-haspopup="menu"
-            aria-expanded={openMenu === "edit"}
-            onClick={() => toggleMenu("edit")}
-          >
-            Edit
-          </button>
-          {openMenu === "edit" ? (
-            <div className="dropdown-menu" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!canUndo}
-                onClick={() => choose(onUndo)}
-              >
-                <Icon name="undo" size={15} />
-                {undoLabel ? `Undo ${undoLabel}` : "Undo"}
-                <kbd>⌘Z</kbd>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!canRedo}
-                onClick={() => choose(onRedo)}
-              >
-                <Icon name="redo" size={15} />
-                {redoLabel ? `Redo ${redoLabel}` : "Redo"}
-                <kbd>⇧⌘Z</kbd>
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="menu-host">
-          <button
-            type="button"
-            role="menuitem"
-            aria-haspopup="menu"
             aria-expanded={openMenu === "view"}
             onClick={() => toggleMenu("view")}
           >
@@ -256,8 +198,15 @@ export function Topbar({
           </button>
           {openMenu === "view" ? (
             <div className="dropdown-menu view-settings-menu" role="menu">
-              <div className="menu-submenu">
-                <button type="button" className="menu-sub-trigger" role="menuitem">
+              <div className={submenuClass("layout")}>
+                <button
+                  type="button"
+                  className="menu-sub-trigger"
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={openSubmenu === "layout"}
+                  onClick={() => toggleSubmenu("layout")}
+                >
                   <Icon name="layout" size={16} />
                   <span>View Layout</span>
                   <Icon name="chevron-right" size={16} />
@@ -285,8 +234,15 @@ export function Topbar({
                 </div>
               </div>
               <span className="menu-separator" />
-              <div className="menu-submenu">
-                <button type="button" className="menu-sub-trigger" role="menuitem">
+              <div className={submenuClass("panel-color")}>
+                <button
+                  type="button"
+                  className="menu-sub-trigger"
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={openSubmenu === "panel-color"}
+                  onClick={() => toggleSubmenu("panel-color")}
+                >
                   <Icon name="triangle" size={16} />
                   <span>Panel Color Mode</span>
                   <Icon name="chevron-right" size={16} />
@@ -309,8 +265,15 @@ export function Topbar({
                   ))}
                 </div>
               </div>
-              <div className="menu-submenu">
-                <button type="button" className="menu-sub-trigger" role="menuitem">
+              <div className={submenuClass("edge-color")}>
+                <button
+                  type="button"
+                  className="menu-sub-trigger"
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={openSubmenu === "edge-color"}
+                  onClick={() => toggleSubmenu("edge-color")}
+                >
                   <Icon name="minus" size={16} />
                   <span>Edge Color Mode</span>
                   <Icon name="chevron-right" size={16} />
@@ -353,8 +316,15 @@ export function Topbar({
                   {preferences[property] ? <Icon name="check" size={16} /> : null}
                 </button>
               ))}
-              <div className="menu-submenu">
-                <button type="button" className="menu-sub-trigger" role="menuitem">
+              <div className={submenuClass("projection")}>
+                <button
+                  type="button"
+                  className="menu-sub-trigger"
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={openSubmenu === "projection"}
+                  onClick={() => toggleSubmenu("projection")}
+                >
                   <Icon name="video" size={16} />
                   <span>Camera Projection</span>
                   <Icon name="chevron-right" size={16} />
@@ -401,6 +371,15 @@ export function Topbar({
               <button
                 type="button"
                 role="menuitem"
+                onClick={onToggleInspector}
+              >
+                <Icon name="panel-right" size={16} />
+                <span>Inspector</span>
+                {inspectorOpen ? <Icon name="check" size={16} /> : null}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
                 onClick={() => onUpdatePreferences({
                   darkMode: !preferences.darkMode,
                 })}
@@ -415,13 +394,24 @@ export function Topbar({
       </div>
 
       <button type="button" className="upgrade" aria-label="Upgrade to Pro">
-        <Icon name="sparkles" size={16} />
+        <Icon name="square-plus" size={16} />
         <span className="upgrade-label">Upgrade to Pro</span>
         <span className="upgrade-label-compact" aria-hidden="true">Pro</span>
       </button>
       <div className="menu-group right">
-        <button type="button">What&apos;s New</button>
-        <button type="button">Docs</button>
+        <button type="button" className="whats-new">
+          <span className="whats-new-dot" aria-hidden="true" />
+          What&apos;s New
+        </button>
+        <button type="button" className="docs">Docs</button>
+        <button
+          type="button"
+          className="icon-button feedback"
+          aria-label="Feedback"
+          title="Feedback"
+        >
+          <Icon name="message-circle" size={16} />
+        </button>
         <img className="guest-avatar" src={guestAvatar} alt="Guest Avatar" />
       </div>
     </header>

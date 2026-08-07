@@ -19,6 +19,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type DragEvent,
 } from "react";
 import { packCadLogo } from "./assets/sourceChrome";
@@ -67,6 +68,22 @@ type ImportNotice = {
   message: string;
 };
 
+const MOBILE_MEDIA_QUERY = "(max-width: 767px)";
+
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(
+    () => window.matchMedia(MOBILE_MEDIA_QUERY).matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const update = (event: MediaQueryListEvent): void =>
+      setIsMobile(event.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  return isMobile;
+}
+
 function projectFromRoute(): ProjectSnapshot | null {
   try {
     const encoded = new URLSearchParams(window.location.hash.slice(1)).get(
@@ -106,6 +123,8 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [mobileNoticeVisible, setMobileNoticeVisible] = useState(true);
+  const [mobileNoticeHeight, setMobileNoticeHeight] = useState(0);
+  const isMobile = useIsMobile();
   const [openSection, setOpenSection] = useState<
     "samples" | "material" | "artwork" | null
   >(null);
@@ -138,6 +157,38 @@ export default function App() {
     foldingPlayback.displayedProject,
     foldingPlayback.player,
   );
+
+  const noticeResizeObserverRef = useRef<ResizeObserver | null>(null);
+  const measureMobileNotice = useCallback((
+    node: HTMLDivElement | null,
+  ): void => {
+    noticeResizeObserverRef.current?.disconnect();
+    noticeResizeObserverRef.current = null;
+    if (!node) {
+      setMobileNoticeHeight(0);
+      return;
+    }
+    const update = (): void => setMobileNoticeHeight(node.offsetHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    noticeResizeObserverRef.current = observer;
+  }, []);
+
+  useEffect(() => {
+    if (isMobile) setSidebarCollapsed(true);
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (sidebarCollapsed) setOpenSection(null);
+  }, [sidebarCollapsed]);
+
+  const openSidebarSection = useCallback((
+    section: "samples" | "material" | "artwork" | null,
+  ): void => {
+    setOpenSection(section);
+    if (section) setSidebarCollapsed(false);
+  }, []);
 
   const refreshDrafts = useCallback(async (): Promise<void> => {
     setDrafts(await documentStore.list());
@@ -722,6 +773,9 @@ export default function App() {
       className={
         sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"
       }
+      style={{
+        "--mobile-notice-height": `${mobileNoticeHeight}px`,
+      } as CSSProperties}
       data-app="packcad-editable"
       onClick={() => setOpenMenu(null)}
       onDragEnter={handleProjectDragEnter}
@@ -729,6 +783,13 @@ export default function App() {
       onDragLeave={handleProjectDragLeave}
       onDrop={handleProjectDrop}
     >
+      {isMobile && !sidebarCollapsed ? (
+        <div
+          className="sidebar-scrim"
+          aria-hidden="true"
+          onClick={() => setSidebarCollapsed(true)}
+        />
+      ) : null}
       <SourceSidebar
         project={state.content}
         preferences={preferences}
@@ -739,7 +800,7 @@ export default function App() {
         activeDocumentId={activeDocument.id}
         samples={packCadSampleLibrary}
         openSection={openSection}
-        onSetOpenSection={setOpenSection}
+        onSetOpenSection={openSidebarSection}
         onLoadSample={(sampleId) => void loadSample(sampleId)}
         onImport={(file) => void importDielineFile(file)}
         onSelectMaterialSpec={selectMaterialSpec}
@@ -794,19 +855,13 @@ export default function App() {
         ) : null}
         <Topbar
           openMenu={openMenu}
-          sidebarCollapsed={sidebarCollapsed}
           inspectorOpen={inspectorOpen}
-          canUndo={state.canUndo}
-          canRedo={state.canRedo}
-          undoLabel={state.undoLabel}
-          redoLabel={state.redoLabel}
           saveState={saveState}
           drafts={drafts}
           activeDocumentId={activeDocument.id}
           preferences={preferences}
           projection={state.content.projection}
           onSetOpenMenu={setOpenMenu}
-          onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
           onOpenPreferences={() => {
             setOpenMenu(null);
             setPreferencesOpen(true);
@@ -826,8 +881,6 @@ export default function App() {
           onOpenDraft={(draft) => void openDraft(draft)}
           onDeleteDraft={(draft) => void deleteDraft(draft)}
           onExport={(format) => void exportProject(format)}
-          onUndo={state.undo}
-          onRedo={state.redo}
           onSetViewLayout={applyViewLayout}
           onUpdatePreferences={updatePreferences}
           onSetProjection={(projection) => {
@@ -835,6 +888,18 @@ export default function App() {
             updatePreferences({ cameraType: projection });
           }}
         />
+        <button
+          type="button"
+          className="sidebar-edge-toggle"
+          aria-label="Toggle Sidebar"
+          title="Toggle Sidebar"
+          onClick={() => setSidebarCollapsed((current) => !current)}
+        >
+          <Icon
+            name={sidebarCollapsed ? "chevron-right" : "chevron-left"}
+            size={12}
+          />
+        </button>
         <input
           ref={projectInputRef}
           className="hidden-file"
@@ -993,7 +1058,11 @@ export default function App() {
           </div>
         ) : null}
         {mobileNoticeVisible ? (
-          <div className="mobile-screen-notice" role="status">
+          <div
+            className="mobile-screen-notice"
+            role="status"
+            ref={measureMobileNotice}
+          >
             <Icon name="monitor" size={20} />
             <span>
               PackCAD Mockup works on any device, but is optimized for larger

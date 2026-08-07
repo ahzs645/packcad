@@ -4,6 +4,7 @@ export type IconName =
   | "arrow-up-down"
   | "box"
   | "check"
+  | "chevron-left"
   | "chevron-right"
   | "columns"
   | "contrast"
@@ -13,6 +14,7 @@ export type IconName =
   | "layers"
   | "layout"
   | "maximize"
+  | "message-circle"
   | "minus"
   | "monitor"
   | "moon"
@@ -28,8 +30,10 @@ export type IconName =
   | "rows"
   | "save"
   | "settings"
+  | "settings-2"
   | "share"
   | "sparkles"
+  | "square-plus"
   | "stack"
   | "trash"
   | "triangle"
@@ -51,6 +55,7 @@ const icons: Record<IconName, ReactNode> = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  "chevron-left": <path d="m15 18-6-6 6-6" />,
   "chevron-right": <path d="m9 18 6-6-6-6" />,
   columns: (
     <>
@@ -96,6 +101,12 @@ const icons: Record<IconName, ReactNode> = {
     </>
   ),
   maximize: <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3" />,
+  "message-circle": (
+    <>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+      <path d="M8 12h.01M12 12h.01M16 12h.01" />
+    </>
+  ),
   minus: <path d="M5 12h14" />,
   monitor: (
     <>
@@ -153,6 +164,19 @@ const icons: Record<IconName, ReactNode> = {
     <>
       <path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4A2 2 0 0 0 4 9.9l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.8l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.8v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2Z" />
       <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  "settings-2": (
+    <>
+      <path d="M14 17H5M19 7h-9" />
+      <circle cx="17" cy="17" r="3" />
+      <circle cx="7" cy="7" r="3" />
+    </>
+  ),
+  "square-plus": (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M8 12h8M12 8v8" />
     </>
   ),
   share: (

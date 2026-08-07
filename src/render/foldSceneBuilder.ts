@@ -140,10 +140,14 @@ function weightedV3(
 }
 
 const SCENE_EXTENT = 3; // post-normalization target span (foldSceneFrame scales to this)
-// The live renderer displays the nominal board thickness with a narrower shell
-// than a literal FOLD-unit extrusion. Keep the authored value unchanged in the
-// inspector and calibrate only its viewport representation.
-export const SOURCE_THICKNESS_DISPLAY_SCALE = 0.6;
+// PackCAD extrudes the full authored board thickness in graph units (verified
+// in the reference bundle: GraphVisInstance3D uses the thickness verbatim, and
+// OperationFoldingSetup offsets by t or t/2 with no display scaling). The old
+// 0.6 fudge here was calibrated against the inverted-extrusion shell (interior
+// sheet stacked outside), which made walls read too thick from outside; with
+// the extrusion fixed it only thinned every board and opened visible air gaps
+// in double-wall rails that the source shows tightly packed.
+export const SOURCE_THICKNESS_DISPLAY_SCALE = 1;
 const CREASE_LINE_SURFACE_OFFSET = 0.006; // line epsilon above the front slab surface
 const LOCKED_TINT_OFFSET = 0.004; // tint sits under the lines, above the face
 const SELECTED_TINT_OFFSET = 0.005;
@@ -242,6 +246,8 @@ type FoldScenePositionLayout = {
   model: FoldModel;
   projection: FoldProjection;
   frame: ReturnType<typeof foldSceneFrame>;
+  /** Per-face alignment of the Newell loop normal to the rendered winding. */
+  faceNormalSigns: number[];
   meshRecipes: FoldVertexPositionRecipe[];
   lockedTintRecipes: FoldVertexPositionRecipe[];
   lockedIconRecipes: FoldVertexPositionRecipe[];
@@ -601,7 +607,36 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // diverge once it folds up. Winding is the only fold-stable source of truth.
   const flipAll = false;
   const faceFlipped: boolean[] = model.facesVertices.map(() => flipAll);
-  const faceNormals = rawNormals.map((n) => (flipAll ? v3scale(n, -1) : n));
+
+  // The thickness must extrude BEHIND the surface the front material renders
+  // on, so the offset normal has to agree with the RENDERED triangle winding.
+  // The loop's Newell normal and the triangulator's output orientation can
+  // disagree (the fold->scene axis remap mirrors handedness, and cdt2d
+  // normalizes its triangle orientation), which used to stack the interior
+  // sheet on the exterior side: flat walls hid it via culling, but every rail,
+  // bend and sideband was built inside-out, showing kraft where the source
+  // shows print. Align each normal with its own first triangle; the sign is a
+  // topological constant, so the playback update path reuses it via
+  // positionLayout.faceNormalSigns.
+  const faceTris = model.facesVertices.map((loop, faceIndex) => {
+    const rawTris = triangulateFace(loop, model.verticesCoords);
+    // Reverse winding when the face was flipped outward so FrontSide faces out.
+    return faceFlipped[faceIndex]
+      ? rawTris.map(([a, b, c]) => [a, c, b] as [number, number, number])
+      : rawTris;
+  });
+  const faceNormalSigns = model.facesVertices.map((_loop, faceIndex) => {
+    const tri = faceTris[faceIndex][0];
+    if (!tri) return 1;
+    const [a, b, c] = tri;
+    const triNormal = v3cross(
+      v3sub(scenePositions[b] as V3, scenePositions[a] as V3),
+      v3sub(scenePositions[c] as V3, scenePositions[a] as V3),
+    );
+    return v3dot(triNormal, rawNormals[faceIndex]) < 0 ? -1 : 1;
+  });
+  const faceNormals = rawNormals.map((n, faceIndex) =>
+    faceNormalSigns[faceIndex] < 0 ? v3scale(n, -1) : n);
 
   // Per-face front/back vertex slabs + triangles.
   const faceData = model.facesVertices.map((loop, faceIndex) => {
@@ -624,11 +659,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         faceColor,
       ));
     }
-    const rawTris = triangulateFace(loop, model.verticesCoords);
-    // Reverse winding when the face was flipped outward so FrontSide faces out.
-    const tris: Array<[number, number, number]> = faceFlipped[faceIndex]
-      ? rawTris.map(([a, b, c]) => [a, c, b])
-      : rawTris;
+    const tris = faceTris[faceIndex];
     for (const [a, b, c] of tris) {
       frontIndices.push(front.get(a)!, front.get(b)!, front.get(c)!);
     }
@@ -1327,6 +1358,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       model,
       projection,
       frame,
+      faceNormalSigns,
       meshRecipes,
       lockedTintRecipes: lockedTint.recipes,
       lockedIconRecipes,
@@ -1450,7 +1482,7 @@ export function updateFoldScenePositions(
     (point[2] - cz) * frame.scale,
     (point[1] - cy) * frame.scale * depthSign,
   ]);
-  const faceNormals: V3[] = model.facesVertices.map((loop) => {
+  const faceNormals: V3[] = model.facesVertices.map((loop, faceIndex) => {
     let nx = 0;
     let ny = 0;
     let nz = 0;
@@ -1461,7 +1493,8 @@ export function updateFoldScenePositions(
       ny += (current[2] - next[2]) * (current[0] + next[0]);
       nz += (current[0] - next[0]) * (current[1] + next[1]);
     }
-    return v3norm([nx, ny, nz]);
+    const sign = data.positionLayout.faceNormalSigns[faceIndex] ?? 1;
+    return v3norm([nx * sign, ny * sign, nz * sign]);
   });
 
   const meshAttribute = data.geometry.getAttribute("position");
