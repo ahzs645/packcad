@@ -167,6 +167,48 @@ const VIEWS = [
   { name: "edge", zoom: { x: 0.5, y: 0.5, steps: 4 } },
 ];
 
+/**
+ * Angle-match our app to the reference's deterministic boot camera (verified
+ * empirically against the mirror: our bundled documents carry a 180-degree
+ * Y rotation, so the reference's front-left view lands at (-1,1,-1) in our
+ * y-up scene). Override with ANGLE="x,y,z" / ZOOM=<factor>. Needs the
+ * dev-only window.__packcadViewports hook.
+ */
+async function matchReferenceAngle(page, direction = [-1, 1, -1], zoomFactor = 1.2) {
+  return page.evaluate(({ direction, zoomFactor }) => {
+    const viewport = window.__packcadViewports?.["3d"];
+    if (!viewport) return false;
+    const state = viewport.camera.getState();
+    const [tx, ty, tz] = state.target;
+    const distance = Math.hypot(
+      state.position[0] - tx,
+      state.position[1] - ty,
+      state.position[2] - tz,
+    );
+    const norm = Math.hypot(...direction) || 1;
+    const scaled = direction.map((component) => (component / norm) * distance);
+    viewport.camera.setState({
+      ...state,
+      position: [tx + scaled[0], ty + scaled[1], tz + scaled[2]],
+      zoom: state.zoom * zoomFactor,
+    });
+    return true;
+  }, { direction, zoomFactor });
+}
+
+/** Best-effort dismissal of the reference mirror's onboarding popups. */
+async function dismissPopups(page) {
+  await page.evaluate(() => {
+    for (const button of document.querySelectorAll("button, [role=button]")) {
+      const label = (button.getAttribute("aria-label") || "").toLowerCase();
+      const text = (button.textContent || "").trim();
+      if (label.includes("close") || label.includes("dismiss") || text === "×") {
+        button.click();
+      }
+    }
+  });
+}
+
 async function captureViews(page, outDir, prefix) {
   for (const view of VIEWS) {
     if (view.zoom) await zoomAt(page, view.zoom.x, view.zoom.y, view.zoom.steps);
@@ -217,6 +259,14 @@ try {
     throw new Error("Mailer Box entry not found in the app sidebar");
   }
   await sleep(12000);
+  const angleDirection = process.env.ANGLE
+    ? process.env.ANGLE.split(",").map(Number)
+    : undefined;
+  const zoomFactor = process.env.ZOOM ? Number(process.env.ZOOM) : undefined;
+  if (!(await matchReferenceAngle(ours, angleDirection, zoomFactor))) {
+    console.warn("__packcadViewports hook missing (production build?); keeping default angle");
+  }
+  await sleep(1200);
   await captureViews(ours, outDir, "ours");
 
   const ref = await browser.newPage();
@@ -227,6 +277,8 @@ try {
   // folded state is captured.
   await clickByText(ref, "div,button,li", "Folding Keyframe 5");
   await sleep(15000);
+  await dismissPopups(ref);
+  await sleep(800);
   await captureViews(ref, outDir, "ref");
 
   writeContactSheet(outDir);

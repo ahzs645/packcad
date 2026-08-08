@@ -379,6 +379,23 @@ export function ViewportPane({
     setViewport(readyViewport);
   }, []);
 
+  useEffect(() => {
+    // Camera/scene hooks for tooling (scripts/parity-shots.mjs) so captures
+    // can be angle-matched against the reference. Keyed per pane because the
+    // compact 2D minimap is its own ViewportPane instance. Dev server only.
+    if (!import.meta.env.DEV || !viewport) return;
+    const key = `${viewMode}${compact ? "-compact" : ""}`;
+    const host = window as unknown as {
+      __packcadViewports?: Record<string, Viewport>;
+    };
+    host.__packcadViewports = { ...host.__packcadViewports, [key]: viewport };
+    return () => {
+      if (host.__packcadViewports?.[key] === viewport) {
+        delete host.__packcadViewports[key];
+      }
+    };
+  }, [compact, viewMode, viewport]);
+
   const fitToView = useCallback((): void => {
     if (!viewport || !sceneObjectRef.current) return;
     viewport.camera.fit(

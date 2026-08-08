@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "patch:reference": "node scripts/patch-reference-mirror.mjs",
     "check:reference-patch": "node scripts/patch-reference-mirror.mjs --check",
+    "shots:parity": "node scripts/parity-shots.mjs",
     "parity:pillowbox": "vitest run --config vitest.pillow-parity.config.ts --reporter=verbose",
     "typecheck": "tsc -b --pretty",
     "test": "vitest run",
