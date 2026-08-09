@@ -93,13 +93,17 @@ export function createFoldSceneMaterials({
   const cutEdgeColor = new Color(
     technical ? "#f1f1f1" : edgeTexture ? "#ffffff" : edgeFallbackColor,
   );
+  // FrontSide like the source's GraphVisSideBand: with true outward normals a
+  // cut face tucked inside a double-wall slot turns away from the light rig
+  // and falls to ambient, reading as the source's dark cavity. DoubleSide
+  // flipped the normals per fragment and lit those faces fully.
   const baseEdgeMaterial = new MeshStandardMaterial({
     color: cutEdgeColor,
     map: technical ? null : edgeTexture,
     roughness: technical ? 0.96 : 1,
     metalness: 0,
     wireframe: technical,
-    side: DoubleSide,
+    side: FrontSide,
     polygonOffset: true,
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,

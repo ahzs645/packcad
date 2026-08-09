@@ -90,14 +90,16 @@ describe("fold scene material groups", () => {
       .toEqual([0, 1, 5, 2, 3]);
     expect(scene.geometry.groups.every((group) => group.count > 0)).toBe(true);
     const edgeGroup = scene.geometry.groups.find((group) => group.materialIndex === 2);
-    const capGroup = scene.geometry.groups.find((group) => group.materialIndex === 3);
+    const [capGroup] = scene.geometry.groups.filter((group) => group.materialIndex === 3);
+    // The remaining cap range is the hinge-end crescents; closed seams stay open.
     const bendCount = scene.geometry.groups
       .filter((group) => group.materialIndex === 4 || group.materialIndex === 5)
       .reduce((sum, group) => sum + group.count, 0);
     expect(edgeGroup?.count).toBe(
       scene.meta.cutEdgeIndexCount - scene.meta.closedSeamCapIndexCount,
     );
-    expect(capGroup?.count).toBe(scene.meta.closedSeamCapIndexCount);
+    expect(capGroup?.count).toBe(scene.meta.foldHingeCapIndexCount);
+    expect(scene.meta.closedSeamCapIndexCount).toBe(0);
     expect(bendCount).toBe(scene.meta.foldHingeBendIndexCount);
     expect(materials.base.map((material) => material.map)).toEqual([
       faceTexture,
@@ -107,10 +109,12 @@ describe("fold scene material groups", () => {
       faceTexture,
       faceTexture,
     ]);
+    // Edge band is FrontSide like the source's GraphVisSideBand, so cut faces
+    // inside double-wall slots shade dark with true normals.
     expect(materials.base.map((material) => material.side)).toEqual([
       FrontSide,
       BackSide,
-      DoubleSide,
+      FrontSide,
       DoubleSide,
       DoubleSide,
       DoubleSide,

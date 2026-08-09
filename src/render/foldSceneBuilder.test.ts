@@ -180,7 +180,7 @@ describe("fold scene frame updates", () => {
     disposeScene(scene);
   });
 
-  it("renders one cut-edge band at each fully folded K5 corner", () => {
+  it("leaves double-wall end slots open at fully folded K5 corners", () => {
     const project = createMailerBoxProject();
     const model = project.foldModel;
     if (!model) throw new Error("MailerBox fixture did not produce a fold model");
@@ -194,12 +194,13 @@ describe("fold scene frame updates", () => {
       edgeColorMode: "mountain-valley",
     });
 
-    expect(scene.meta.closedSeamEdgeCount).toBe(4);
-    expect(scene.meta.closedSeamCapIndexCount).toBe(24);
-    expect(scene.geometry.groups.at(-1)).toMatchObject({
-      count: 24,
-      materialIndex: 3,
-    });
+    // The source renders each board's own cut band and lets the slot between
+    // the double walls fall dark; no bridge-cap geometry closes the seam.
+    expect(scene.meta.closedSeamEdgeCount).toBe(0);
+    expect(scene.meta.closedSeamCapIndexCount).toBe(0);
+    const capGroups = scene.geometry.groups.filter((group) => group.materialIndex === 3);
+    expect(capGroups).toHaveLength(1);
+    expect(capGroups[0]?.count).toBe(scene.meta.foldHingeCapIndexCount);
 
     disposeScene(scene);
   });
