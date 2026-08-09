@@ -6,7 +6,6 @@ import type {
   ViewLayout,
 } from "../model/uiPreferences";
 import type { ProjectSaveState } from "../persistence/projectDocuments";
-import { guestAvatar } from "../assets/sourceChrome";
 import {
   edgeColorModeOptions,
   panelColorModeOptions,
@@ -393,27 +392,6 @@ export function Topbar({
         </div>
       </div>
 
-      <button type="button" className="upgrade" aria-label="Upgrade to Pro">
-        <Icon name="square-plus" size={16} />
-        <span className="upgrade-label">Upgrade to Pro</span>
-        <span className="upgrade-label-compact" aria-hidden="true">Pro</span>
-      </button>
-      <div className="menu-group right">
-        <button type="button" className="whats-new">
-          <span className="whats-new-dot" aria-hidden="true" />
-          What&apos;s New
-        </button>
-        <button type="button" className="docs">Docs</button>
-        <button
-          type="button"
-          className="icon-button feedback"
-          aria-label="Feedback"
-          title="Feedback"
-        >
-          <Icon name="message-circle" size={16} />
-        </button>
-        <img className="guest-avatar" src={guestAvatar} alt="Guest Avatar" />
-      </div>
     </header>
   );
 }
