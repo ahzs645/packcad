@@ -550,9 +550,10 @@ export function ViewportPane({
     const source = frontArtworkTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    // The dieline view no longer mirrors its geometry (3D transforms are kept out
-    // of it), so its artwork uses the same handedness as the folded view.
-    applyArtworkPlacement(texture, project.artwork, false);
+    // The fold-to-scene axis remap changes handedness. Compensate in 3D so the
+    // exterior print remains readable when the camera moves behind the folded
+    // package; the flat dieline keeps the source image's native orientation.
+    applyArtworkPlacement(texture, project.artwork, viewMode !== "2d");
     return texture;
   }, [frontArtworkTexture, project.artwork, viewMode]);
   const placedBackArtworkTexture = useMemo(() => {
