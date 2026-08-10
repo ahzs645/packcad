@@ -7,6 +7,7 @@ import { toDXF, toHPGL, toSVG, toTiledPDF } from "@atelier/io";
 import { downloadBlob, downloadText, toPNG } from "@atelier/io/browser";
 import { toGLTF } from "@atelier/io/three";
 import { useEditor } from "@atelier/react";
+import type { Viewport } from "@atelier/viewport";
 import { createMailerBoxProject } from "@packcad/fold-solver";
 import type {
   PackagingProject,
@@ -15,6 +16,8 @@ import type {
 import { materialCatalog } from "@packcad/format";
 import type { Object3D } from "three";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -69,6 +72,10 @@ type ImportNotice = {
 };
 
 const MOBILE_MEDIA_QUERY = "(max-width: 767px)";
+const RenderDialog = lazy(async () => {
+  const module = await import("./components/RenderDialog");
+  return { default: module.RenderDialog };
+});
 
 function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState(
@@ -129,6 +136,8 @@ export default function App() {
     "samples" | "material" | "artwork" | null
   >(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [renderOpen, setRenderOpen] = useState(false);
+  const [renderViewport, setRenderViewport] = useState<Viewport | null>(null);
   const [preferences, setPreferences] = useState<UiPreferences>(
     () => preferencesForLoadedProject(
       initialEditor.content,
@@ -866,6 +875,10 @@ export default function App() {
             setOpenMenu(null);
             setPreferencesOpen(true);
           }}
+          onOpenRender={() => {
+            setOpenMenu(null);
+            setRenderOpen(true);
+          }}
           onToggleInspector={() => setInspectorOpen((current) => !current)}
           onNewProject={() => void startFresh()}
           onOpenSampleLibrary={() => {
@@ -943,6 +956,7 @@ export default function App() {
           }}
           onHoverFoldEdge={setHoveredFoldEdgeIndex}
           onSceneObject={setSceneObject}
+          onViewport={setRenderViewport}
           onSetViewLayout={applyViewLayout}
           onFit={() => {
             setFitNonce((current) => current + 1);
@@ -1104,6 +1118,14 @@ export default function App() {
             setFitNonce((current) => current + 1);
           }}
         />
+        <Suspense fallback={null}>
+          <RenderDialog
+            open={renderOpen}
+            viewport={renderViewport}
+            sceneObject={sceneObject}
+            onClose={() => setRenderOpen(false)}
+          />
+        </Suspense>
       </main>
     </div>
   );

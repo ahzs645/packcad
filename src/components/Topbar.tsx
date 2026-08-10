@@ -24,6 +24,7 @@ interface TopbarProps {
   projection: CameraProjection;
   onSetOpenMenu: (menu: OpenMenu) => void;
   onOpenPreferences: () => void;
+  onOpenRender: () => void;
   onToggleInspector: () => void;
   onNewProject: () => void;
   onOpenSampleLibrary: () => void;
@@ -52,6 +53,7 @@ export function Topbar({
   projection,
   onSetOpenMenu,
   onOpenPreferences,
+  onOpenRender,
   onToggleInspector,
   onNewProject,
   onOpenSampleLibrary,
@@ -390,6 +392,16 @@ export function Topbar({
             </div>
           ) : null}
         </div>
+
+        <button
+          type="button"
+          className="render-button"
+          onClick={onOpenRender}
+        >
+          <Icon name="sparkles" size={14} />
+          Render
+          <small>Beta</small>
+        </button>
       </div>
 
     </header>

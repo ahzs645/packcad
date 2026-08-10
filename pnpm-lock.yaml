@@ -20,6 +20,9 @@ importers:
       '@atelier/react':
         specifier: link:../atelier/packages/react
         version: link:../atelier/packages/react
+      '@atelier/render':
+        specifier: link:../atelier/packages/render
+        version: link:../atelier/packages/render
       '@atelier/sim':
         specifier: link:../atelier/packages/sim
         version: link:../atelier/packages/sim

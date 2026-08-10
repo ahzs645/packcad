@@ -116,6 +116,7 @@ interface ViewportPaneProps {
   onSelectFoldEdge: (edgeIndex: number | null) => void;
   onHoverFoldEdge: (edgeIndex: number | null) => void;
   onSceneObject?: (object: Object3D | null) => void;
+  onViewport?: (viewport: Viewport | null) => void;
   panelColorMode?: PanelColorMode;
   edgeColorMode?: EdgeColorMode;
   showGroundPlane?: boolean;
@@ -334,6 +335,7 @@ export function ViewportPane({
   onSelectFoldEdge,
   onHoverFoldEdge,
   onSceneObject,
+  onViewport,
   panelColorMode = "artwork",
   edgeColorMode = "mountain-valley",
   showGroundPlane = project.showHelpers,
@@ -378,6 +380,11 @@ export function ViewportPane({
     readyViewport.renderer.shadowMap.type = BasicShadowMap;
     setViewport(readyViewport);
   }, []);
+
+  useEffect(() => {
+    onViewport?.(viewport);
+    return () => onViewport?.(null);
+  }, [onViewport, viewport]);
 
   useEffect(() => {
     // Camera/scene hooks for tooling (scripts/parity-shots.mjs) so captures
@@ -1030,6 +1037,8 @@ export function ViewportPane({
     const selectedTintMesh = data.selectedTintGeometry
       ? new Mesh(data.selectedTintGeometry, selectedTintMaterial)
       : null;
+    if (lockedTintMesh) lockedTintMesh.name = "PackCAD locked face tint";
+    if (selectedTintMesh) selectedTintMesh.name = "PackCAD selected face tint";
     if (lockedTintMesh) lockedTintMesh.renderOrder = 1;
     if (lockedIconPoints) lockedIconPoints.renderOrder = 18;
     if (selectedTintMesh) selectedTintMesh.renderOrder = 2;

@@ -178,6 +178,13 @@ export function createFoldSceneMaterials({
   artworkFrontBendMaterial.side = DoubleSide;
   const artworkBackBendMaterial = artworkBackMaterial.clone();
   artworkBackBendMaterial.side = DoubleSide;
+  // The path tracer has no raster polygon offset. Keep the physical print
+  // separation direction on each material so its scene-preparation pass can
+  // move exterior and interior layers to opposite sides of the same sheet.
+  artworkFrontMaterial.userData.atelierLayerOffsetDirection = 1;
+  artworkBackMaterial.userData.atelierLayerOffsetDirection = -1;
+  artworkFrontBendMaterial.userData.atelierLayerOffsetDirection = 1;
+  artworkBackBendMaterial.userData.atelierLayerOffsetDirection = -1;
   const artwork: FoldSceneMaterials = [
     artworkFrontMaterial,
     artworkBackMaterial,

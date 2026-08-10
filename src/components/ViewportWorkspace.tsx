@@ -2,6 +2,7 @@ import type { FoldingPlayerState } from "@packcad/fold-solver";
 import type { ThicknessOffsetDirection } from "@packcad/fold-solver";
 import type { PackagingProject, ViewMode } from "@packcad/format";
 import type { Object3D } from "three";
+import type { Viewport } from "@atelier/viewport";
 import type { UiPreferences, ViewLayout } from "../model/uiPreferences";
 import type { CachedFoldSettlement } from "../render/foldSettlement";
 import { Icon } from "./Icon";
@@ -21,6 +22,7 @@ interface ViewportWorkspaceProps {
   onSelectFoldEdge: (edgeIndex: number | null) => void;
   onHoverFoldEdge: (edgeIndex: number | null) => void;
   onSceneObject: (object: Object3D | null) => void;
+  onViewport: (viewport: Viewport | null) => void;
   onSetViewLayout: (layout: ViewLayout) => void;
   onFit: () => void;
   onToggleGridAxes: () => void;
@@ -42,6 +44,7 @@ export function ViewportWorkspace({
   onSelectFoldEdge,
   onHoverFoldEdge,
   onSceneObject,
+  onViewport,
   onSetViewLayout,
   onFit,
   onToggleGridAxes,
@@ -82,6 +85,7 @@ export function ViewportWorkspace({
       onSelectFoldEdge={onSelectFoldEdge}
       onHoverFoldEdge={onHoverFoldEdge}
       onSceneObject={options.trackScene ? onSceneObject : undefined}
+      onViewport={options.trackScene ? onViewport : undefined}
       panelColorMode={preferences.panelColorMode}
       edgeColorMode={preferences.edgeColorMode}
       showGroundPlane={preferences.groundPlane}
