@@ -11,8 +11,6 @@
 // and converted from px to inches. Reproduce that arithmetic exactly because
 // cdt2d's choice on cocircular panels is floating-point sensitive.
 
-/// <reference path="./cdt2d.d.ts" />
-
 import cdt2d from "cdt2d";
 import type { FoldModel } from "@packcad/format";
 

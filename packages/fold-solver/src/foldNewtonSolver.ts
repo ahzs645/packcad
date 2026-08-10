@@ -418,18 +418,6 @@ export function foldNewton(
     faceNormals[fi] = n;
     return n;
   };
-  /** The edge's two faces ordered so the first winds a->b, as the crease
-   *  dihedral's tri1/tri2 are. */
-  const creaseFaces = (edge: number, a: number, b: number): [number, number] | null => {
-    const faces = model.edgeFaces[edge];
-    if (!faces || faces.length < 2) return null;
-    const [p, q] = faces;
-    return edgeTraversal(model.facesVertices[p], a, b) !== 1
-      && edgeTraversal(model.facesVertices[q], a, b) === 1
-      ? [q, p]
-      : [p, q];
-  };
-
   // ---- fold branch state ----------------------------------------------------
   // The reference keeps a CreaseDihedralConstraint on every manifold edge, so
   // the branch latch is maintained model-wide, not just on the driven creases.

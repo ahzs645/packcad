@@ -101,7 +101,7 @@ describe("fold scene frame updates", () => {
     })).not.toThrow();
     expect(scene.geometry.getAttribute("position").count).toBeGreaterThan(0);
     disposeScene(scene);
-  }, 15_000);
+  });
 
   it("uses the source-calibrated Mailer Box shell while excluding selection from locked tint", () => {
     const project = createMailerBoxProject();

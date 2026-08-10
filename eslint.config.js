@@ -29,4 +29,12 @@ export default tseslint.config(
       "no-console": "off",
     },
   },
+  {
+    // This separately-invoked parity gate intentionally prints diagnostic
+    // metric tables used to localize solver drift when an assertion fails.
+    files: ["packages/fold-solver/src/pillowBox.referenceParity.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
 );
