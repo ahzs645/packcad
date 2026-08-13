@@ -4,6 +4,12 @@ import {
   createMilkCartonProject,
   createPillowBoxProject,
   createSideLoadVhsProject,
+  createBetamaxSlipcoverProject,
+  createCassetteLabelSheetProject,
+  createMiniDiscLabelSheetProject,
+  createVhsFaceLabelSheetProject,
+  createVhsSlipcoverProject,
+  createVhsSpineLabelSheetProject,
 } from "@packcad/fold-solver";
 import type { PackagingProject } from "@packcad/format";
 
@@ -51,6 +57,48 @@ export const packCadSampleLibrary: readonly PackCadSampleDefinition[] = [
     description: "A side-loading VHS sleeve with the traced public cut contour, printable glue zones, and a solved four-stage folding animation.",
     details: "11 panels · 2 glue flaps · 4 solved keyframes",
   },
+  {
+    id: "vhs-slipcover",
+    name: "VHS Slipcover",
+    source: "TaperCraft public Tabloid/A3 template",
+    description: "The traced top-loading VHS sleeve contour with closure flaps, glue areas, and a three-stage fold.",
+    details: "7 panels · 2 glue flaps · 3 keyframes",
+  },
+  {
+    id: "betamax-slipcover",
+    name: "Betamax Slipcover",
+    source: "TaperCraft public Letter/A4 template",
+    description: "The traced Betamax sleeve contour with its rounded closure, glue flaps, and editable folding stages.",
+    details: "7 panels · 2 glue flaps · 3 keyframes",
+  },
+  {
+    id: "vhs-face-label-sheet",
+    name: "VHS Face Label Sheet",
+    source: "TaperCraft public Photopea template",
+    description: "Ten measured, rounded VHS face-label cutouts on a Letter sheet.",
+    details: "10 labels · Letter sheet · vector cuts",
+  },
+  {
+    id: "vhs-spine-label-sheet",
+    name: "VHS Spine Label Sheet",
+    source: "TaperCraft public Photopea template",
+    description: "Fifteen measured VHS spine-label strips on a Letter sheet.",
+    details: "15 labels · Letter sheet · vector cuts",
+  },
+  {
+    id: "cassette-label-sheet",
+    name: "Cassette Label Sheet",
+    source: "TaperCraft public Photopea template",
+    description: "Twelve cassette face-label blanks reconstructed from the public two-column print sheet.",
+    details: "12 labels · Letter sheet · vector cuts",
+  },
+  {
+    id: "minidisc-label-sheet",
+    name: "MiniDisc Label Sheet",
+    source: "TaperCraft public Photopea template",
+    description: "Twelve MiniDisc face labels plus twelve matching spine/shutter strips on an A4 sheet.",
+    details: "24 pieces · A4 sheet · vector cuts",
+  },
 ] as const;
 
 export function createPackCadSampleProject(sampleId: string): PackagingProject {
@@ -65,6 +113,18 @@ export function createPackCadSampleProject(sampleId: string): PackagingProject {
       return createPillowBoxProject();
     case "side-load-vhs":
       return createSideLoadVhsProject();
+    case "vhs-slipcover":
+      return createVhsSlipcoverProject();
+    case "betamax-slipcover":
+      return createBetamaxSlipcoverProject();
+    case "vhs-face-label-sheet":
+      return createVhsFaceLabelSheetProject();
+    case "vhs-spine-label-sheet":
+      return createVhsSpineLabelSheetProject();
+    case "cassette-label-sheet":
+      return createCassetteLabelSheetProject();
+    case "minidisc-label-sheet":
+      return createMiniDiscLabelSheetProject();
     default:
       throw new Error(`Unknown PackCAD sample: ${sampleId}`);
   }

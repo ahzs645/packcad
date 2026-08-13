@@ -9,3 +9,4 @@ export * from "./foldPlaybackConstraints";
 export * from "./foldingPlayer";
 export * from "./foldThickness";
 export * from "./sample";
+export * from "./tapercraftPatterns";
