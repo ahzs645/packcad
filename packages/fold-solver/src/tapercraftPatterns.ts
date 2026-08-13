@@ -18,6 +18,7 @@ type FoldingStageDefinition = {
   facePairs: Array<[string, string]>;
   angle: number;
   glueFaces?: string[];
+  fixedFaces?: string[];
 };
 
 type PatternDefinition = {
@@ -31,6 +32,7 @@ type PatternDefinition = {
   creases?: Array<[Point, Point]>;
   stages?: FoldingStageDefinition[];
   glueFaces?: string[];
+  interiorFaces?: string[];
   cornerRadius?: number;
 };
 
@@ -170,7 +172,10 @@ ${creaseMarkup}
       enabled: true,
     }],
     fixedVertexIDs: [],
-    fixedFaceIDs: [faceIDs[Math.min(1, faceIDs.length - 1)]],
+    fixedFaceIDs: stage.fixedFaces?.flatMap((name) => {
+      const faceIndex = faceIndexByName.get(name);
+      return faceIndex === undefined ? [] : [faceIDs[faceIndex]];
+    }) ?? [faceIDs[Math.min(1, faceIDs.length - 1)]],
     glueFaceIDs: (stage.glueFaces ?? []).flatMap((name) => {
       const index = faceIndexByName.get(name);
       return index === undefined ? [] : [faceIDs[index]];
@@ -211,7 +216,15 @@ ${creaseMarkup}
       modifiers: {},
     },
   };
-  return packCadProjectToProject(file);
+  const project = packCadProjectToProject(file);
+  if (project.foldModel) {
+    project.foldModel.rigidTimeline = true;
+    project.foldModel.interiorFaceIndices = (definition.interiorFaces ?? []).flatMap((name) => {
+      const faceIndex = faceIndexByName.get(name);
+      return faceIndex === undefined ? [] : [faceIndex];
+    });
+  }
+  return project;
 }
 
 function rectangle(name: string, x1: number, y1: number, x2: number, y2: number): FaceDefinition {
@@ -228,6 +241,153 @@ function slipcoverDefinition(kind: "betamax" | "vhs"): PatternDefinition {
   const height = isVhs ? 9.18 : 7.62;
   const frontFlapTop = isVhs ? 9.18 : 7.62;
   const spineFlapTop = isVhs ? 8.2295 : 6.92;
+  if (isVhs) {
+    const leftFlapStart = 0.0565;
+    const leftFlapEnd = 0.9464;
+    const rightFlapStart = 5.1884;
+    const rightFlapEnd = 6.0874;
+    const closureFoldY = bodyTop + (xs[3] - xs[2]);
+    const closureFoldLeft = 1.0155;
+    // This cut corner coincides with the front flap in 2D but is not a hinge.
+    // Keep a sub-print-resolution duplicate so the folded mesh does not weld
+    // two independently moving flap vertices together.
+    const rightCutCorner = xs[2] + 0.00002;
+    const faces: FaceDefinition[] = [
+      {
+        name: "Left spine",
+        loop: [
+          [0.0077, 0], [0.1855, 0.0077], [0.2164, 0.1159],
+          [0.2936, 0.1932], [0.3786, 0.2395], [0.4868, 0.2627],
+          [0.6259, 0.2395], [0.7186, 0.1855], [0.7959, 0.1005],
+          [0.8268, 0], [xs[1], 0], [xs[1], bodyTop],
+          [leftFlapEnd, bodyTop], [leftFlapStart, bodyTop], [0, bodyTop],
+        ],
+      },
+      rectangle("Front", xs[1], 0, xs[2], bodyTop),
+      {
+        name: "Right spine",
+        loop: [
+          [xs[2], 0], [5.2932, 0], [5.3705, 0.1468], [5.4709, 0.2164],
+          [5.5868, 0.2473], [5.7182, 0.2395], [5.7955, 0.2086],
+          [5.8959, 0.1236], [5.9577, 0], [xs[3], 0], [xs[3], bodyTop],
+          [rightFlapEnd, bodyTop], [rightFlapStart, bodyTop], [xs[2], bodyTop],
+        ],
+      },
+      rectangle("Back", xs[3], 0, xs[4], bodyTop),
+      {
+        name: "Glue flap",
+        loop: [
+          [xs[4], 0], [10.3623, 0], [10.3932, 0.0773], [10.4705, 0.17],
+          [10.6173, 0.2395], [xs[5], 0.2473], [xs[5], 7.2636],
+          [xs[4], bodyTop],
+        ],
+      },
+      {
+        name: "Front end cover",
+        loop: [
+          [xs[1], bodyTop], [xs[2], bodyTop], [xs[2], 7.5341],
+          [xs[2], closureFoldY], [closureFoldLeft, closureFoldY],
+          [xs[1], 7.5341],
+        ],
+      },
+      {
+        name: "Front tuck flap",
+        loop: [
+          [closureFoldLeft, closureFoldY], [xs[2], closureFoldY],
+          [xs[2], 8.4768], [5.1077, 8.7859], [5.0382, 8.9868],
+          [4.9532, 9.1105], [4.8759, frontFlapTop], [1.275, frontFlapTop],
+          [1.1127, 9.0177], [1.02, 8.7859],
+        ],
+      },
+      {
+        name: "Left spine closure flap",
+        loop: [
+          [leftFlapStart, bodyTop], [leftFlapEnd, bodyTop], [0.9427, 7.5341],
+          [0.8886, 7.5727], [0.8423, spineFlapTop], [0.2473, spineFlapTop],
+          [0.1932, 8.1445], [0.1159, 7.7736], [0, 7.6886],
+        ],
+      },
+      {
+        name: "Right spine closure flap",
+        loop: [
+          [rightFlapStart, bodyTop], [rightFlapEnd, bodyTop], [xs[3], 7.6732],
+          [5.9964, 7.7968], [5.9423, 8.1214], [5.8882, spineFlapTop],
+          [5.2777, spineFlapTop], [5.2391, 7.5805], [5.2159, 7.5418],
+          [rightCutCorner, 7.5341],
+        ],
+      },
+    ];
+    return {
+      id: "vhs-slipcover",
+      name: "VHS Slipcover",
+      fileName: "vhs-slipcover-production-trace.svg",
+      width: xs[5],
+      height,
+      outlinePaths: [vhsSlipcoverOutline],
+      faces,
+      creases: [
+        ...xs.slice(1, 5).map((x) => [[x, 0], [x, bodyTop]] as [Point, Point]),
+        [[xs[1], bodyTop], [xs[2], bodyTop]],
+        [[closureFoldLeft, closureFoldY], [xs[2], closureFoldY]],
+        [[leftFlapStart, bodyTop], [leftFlapEnd, bodyTop]],
+        [[rightFlapStart, bodyTop], [rightFlapEnd, bodyTop]],
+      ],
+      glueFaces: ["Glue flap"],
+      interiorFaces: [
+        "Glue flap",
+        "Front tuck flap",
+        "Left spine closure flap",
+        "Right spine closure flap",
+      ],
+      stages: [
+        {
+          id: "body",
+          name: "Form sleeve body",
+          facePairs: [
+            ["Left spine", "Front"],
+            ["Front", "Right spine"],
+            ["Right spine", "Back"],
+          ],
+          angle: 90,
+        },
+        {
+          id: "seam",
+          name: "Close and glue side seam",
+          facePairs: [["Back", "Glue flap"]],
+          angle: 90,
+          glueFaces: ["Glue flap"],
+          fixedFaces: ["Left spine", "Front", "Right spine", "Back"],
+        },
+        {
+          id: "side-closure",
+          name: "Fold side closure flaps",
+          facePairs: [
+            ["Left spine", "Left spine closure flap"],
+            ["Right spine", "Right spine closure flap"],
+          ],
+          angle: 90,
+          fixedFaces: ["Left spine", "Front", "Right spine", "Back", "Glue flap"],
+        },
+        {
+          id: "front-closure",
+          name: "Fold front end cover",
+          facePairs: [["Front", "Front end cover"]],
+          angle: 90,
+          fixedFaces: ["Left spine", "Front", "Right spine", "Back", "Glue flap"],
+        },
+        {
+          id: "tuck-closure",
+          name: "Tuck closure flap inside",
+          facePairs: [["Front end cover", "Front tuck flap"]],
+          angle: 90,
+          fixedFaces: [
+            "Left spine", "Front", "Right spine", "Back", "Glue flap",
+            "Front end cover", "Left spine closure flap", "Right spine closure flap",
+          ],
+        },
+      ],
+    };
+  }
   const faces: FaceDefinition[] = [
     rectangle("Left glue flap", xs[0], 0, xs[1], bodyTop),
     rectangle("Front", xs[1], 0, xs[2], bodyTop),
@@ -255,6 +415,194 @@ function slipcoverDefinition(kind: "betamax" | "vhs"): PatternDefinition {
       { id: "body", name: "Form sleeve body", facePairs: [["Front", "Spine"], ["Spine", "Back"]], angle: 90 },
       { id: "seam", name: "Close and glue side seam", facePairs: [["Left glue flap", "Front"], ["Back", "Right glue flap"]], angle: 90, glueFaces: ["Left glue flap", "Right glue flap"] },
       { id: "closure", name: "Fold end closure", facePairs: [["Front", "Front closure flap"], ["Spine", "Spine closure flap"]], angle: 90 },
+    ],
+  };
+}
+
+const cardDeckBoxScale = 72;
+const cardDeckBoxSourceHeight = 406.93;
+
+function cardDeckPoint(x: number, y: number): Point {
+  return [x / cardDeckBoxScale, (cardDeckBoxSourceHeight - y) / cardDeckBoxScale];
+}
+
+function cardDeckFace(name: string, sourceLoop: Point[]): FaceDefinition {
+  return {
+    name,
+    loop: sourceLoop.map(([x, y]) => cardDeckPoint(x, y)),
+  };
+}
+
+function cardDeckBoxDefinition(): PatternDefinition {
+  const face = (name: string, sourceLoop: Point[]) => cardDeckFace(name, sourceLoop);
+  const line = (a: Point, b: Point): [Point, Point] => [
+    cardDeckPoint(...a),
+    cardDeckPoint(...b),
+  ];
+  const faces: FaceDefinition[] = [
+    face("Left wall", [
+      [0.26, 96.84], [53.27, 96.84], [53.27, 353.45], [0.26, 353.45],
+    ]),
+    face("Front", [
+      [53.27, 96.84], [237.8, 96.84], [237.8, 353.45],
+      [233.77, 353.45], [59.08, 353.45], [53.27, 353.45],
+    ]),
+    face("Right wall", [
+      [237.8, 96.84], [291.09, 96.84], [291.09, 353.45],
+      [286.78, 353.45], [242.37, 353.45], [237.8, 353.45],
+    ]),
+    face("Back", [
+      [291.09, 96.84], [351.87, 97.18], [355.18, 98.67],
+      [362.36, 106.73], [370, 113.5], [379.5, 117], [389.5, 117],
+      [399, 113.5], [405.32, 106.85], [412.41, 98.98], [416.44, 97.19],
+      [476.77, 97.19], [476.77, 353.45], [470.81, 353.45],
+      [296.12, 353.45], [291.09, 353.45],
+    ]),
+    face("Glue flap", [
+      [476.77, 97.19], [519.29, 108.53], [519.29, 340.98], [476.77, 353.45],
+    ]),
+    face("Top cover", [
+      [53.27, 96.84], [53.27, 50.82], [70.22, 46.73], [75.95, 43.91],
+      [215.55, 43.91], [220.85, 46.73], [237.8, 50.82], [237.8, 96.84],
+    ]),
+    face("Top tuck flap", [
+      [75.95, 43.91], [54.27, 22.93], [59, 10.5], [66.5, 3.5],
+      [76.94, 0.25], [212.99, 0.25], [224.5, 3.75], [232, 11],
+      [236.8, 22.93], [215.55, 43.91],
+    ]),
+    face("Left top dust flap", [
+      [0.26, 96.84], [0.26, 84.75], [3.09, 81.91], [10.18, 50.82],
+      [53.27, 50.82], [53.27, 96.84],
+    ]),
+    face("Right top dust flap", [
+      [237.8, 96.84], [237.8, 50.82], [280.32, 50.82], [288.26, 82.2],
+      [291.09, 85.03], [291.09, 96.84],
+    ]),
+    face("Left bottom dust flap", [
+      [0.26, 353.45], [53.27, 353.45], [53.27, 366.49],
+      [48.45, 369.33], [41.36, 406.68], [0.26, 406.68],
+    ]),
+    face("Front bottom flap", [
+      [59.08, 353.45], [233.77, 353.45], [237.8, 366.49],
+      [233.78, 406.68], [57.3, 406.68], [53.27, 366.49],
+    ]),
+    face("Right bottom dust flap", [
+      [242.37, 353.45], [286.78, 353.45], [291.09, 406.68],
+      [248.58, 406.68], [241.5, 369.33], [237.8, 366.49],
+    ]),
+    face("Back bottom flap", [
+      [296.12, 353.45], [470.81, 353.45], [475.64, 406.68], [291.1, 406.68],
+    ]),
+  ];
+  const outlineSource: Point[] = [
+    [41.36, 406.68], [48.45, 369.33], [53.27, 366.49],
+    [57.3, 406.68], [233.78, 406.68], [237.81, 366.49],
+    [241.5, 369.33], [248.58, 406.68], [475.64, 406.68],
+    [475.56, 354.99], [476.53, 352.27], [519.29, 340.98],
+    [519.29, 108.53], [476.77, 97.19], [416.44, 97.19],
+    [412.41, 98.98], [405.32, 106.85], [399, 113.5], [389.5, 117],
+    [379.5, 117], [370, 113.5], [362.36, 106.73], [355.18, 98.67],
+    [351.87, 97.18], [291.09, 97.18], [291.09, 85.03], [288.26, 82.2],
+    [280.32, 50.82], [237.8, 50.82], [236.8, 22.93], [232, 11],
+    [224.5, 3.75], [212.99, 0.25], [76.94, 0.25], [66.5, 3.5],
+    [59, 10.5], [54.27, 22.93], [53.27, 50.82], [10.18, 50.82],
+    [3.09, 81.91], [0.26, 84.75], [0.26, 406.68],
+  ];
+  return {
+    id: "card-deck-box",
+    name: "Playing Card Tuck Box",
+    fileName: "tapercraft-card-deck-box.svg",
+    width: 519.53 / cardDeckBoxScale,
+    height: cardDeckBoxSourceHeight / cardDeckBoxScale,
+    outlinePaths: [outlineSource.map(([x, y]) => cardDeckPoint(x, y))],
+    faces,
+    creases: [
+      line([53.27, 96.84], [53.27, 353.45]),
+      line([237.8, 96.84], [237.8, 353.45]),
+      line([291.09, 96.84], [291.09, 353.45]),
+      line([476.77, 97.19], [476.77, 353.45]),
+      line([53.27, 96.84], [237.8, 96.84]),
+      line([75.95, 43.91], [215.55, 43.91]),
+      line([0.26, 96.84], [53.27, 96.84]),
+      line([237.8, 96.84], [291.09, 96.84]),
+      line([0.26, 353.45], [53.27, 353.45]),
+      line([59.08, 353.45], [233.77, 353.45]),
+      line([242.37, 353.45], [286.78, 353.45]),
+      line([296.12, 353.45], [470.81, 353.45]),
+    ],
+    glueFaces: ["Glue flap"],
+    interiorFaces: [
+      "Glue flap", "Top tuck flap", "Left top dust flap", "Right top dust flap",
+      "Left bottom dust flap", "Front bottom flap", "Right bottom dust flap", "Back bottom flap",
+    ],
+    stages: [
+      {
+        id: "body",
+        name: "Form box walls",
+        facePairs: [
+          ["Left wall", "Front"], ["Front", "Right wall"], ["Right wall", "Back"],
+        ],
+        angle: 90,
+      },
+      {
+        id: "seam",
+        name: "Close and glue side seam",
+        facePairs: [["Back", "Glue flap"]],
+        angle: 90,
+        glueFaces: ["Glue flap"],
+        fixedFaces: ["Left wall", "Front", "Right wall", "Back"],
+      },
+      {
+        id: "bottom-dust",
+        name: "Fold bottom dust flaps",
+        facePairs: [
+          ["Left wall", "Left bottom dust flap"],
+          ["Right wall", "Right bottom dust flap"],
+        ],
+        angle: 90,
+        fixedFaces: ["Left wall", "Front", "Right wall", "Back", "Glue flap"],
+      },
+      {
+        id: "bottom-back",
+        name: "Fold bottom back flap",
+        facePairs: [["Back", "Back bottom flap"]],
+        angle: 90,
+        fixedFaces: ["Left wall", "Front", "Right wall", "Back", "Glue flap"],
+      },
+      {
+        id: "bottom-front",
+        name: "Close bottom tuck flap",
+        facePairs: [["Front", "Front bottom flap"]],
+        angle: 90,
+        fixedFaces: ["Left wall", "Front", "Right wall", "Back", "Glue flap"],
+      },
+      {
+        id: "top-dust",
+        name: "Fold top dust flaps",
+        facePairs: [
+          ["Left wall", "Left top dust flap"],
+          ["Right wall", "Right top dust flap"],
+        ],
+        angle: 90,
+        fixedFaces: ["Left wall", "Front", "Right wall", "Back", "Glue flap"],
+      },
+      {
+        id: "top-cover",
+        name: "Close top cover",
+        facePairs: [["Front", "Top cover"]],
+        angle: 90,
+        fixedFaces: ["Left wall", "Front", "Right wall", "Back", "Glue flap"],
+      },
+      {
+        id: "top-tuck",
+        name: "Tuck top flap inside",
+        facePairs: [["Top cover", "Top tuck flap"]],
+        angle: 90,
+        fixedFaces: [
+          "Left wall", "Front", "Right wall", "Back", "Glue flap", "Top cover",
+          "Left top dust flap", "Right top dust flap",
+        ],
+      },
     ],
   };
 }
@@ -308,6 +656,10 @@ export function createBetamaxSlipcoverProject(): PackagingProject {
 
 export function createVhsSlipcoverProject(): PackagingProject {
   return buildPatternProject(slipcoverDefinition("vhs"));
+}
+
+export function createCardDeckBoxProject(): PackagingProject {
+  return buildPatternProject(cardDeckBoxDefinition());
 }
 
 export function createVhsFaceLabelSheetProject(): PackagingProject {

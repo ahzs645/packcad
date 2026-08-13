@@ -14,10 +14,7 @@ describe("PackCAD sample library", () => {
       "side-load-vhs",
       "vhs-slipcover",
       "betamax-slipcover",
-      "vhs-face-label-sheet",
-      "vhs-spine-label-sheet",
-      "cassette-label-sheet",
-      "minidisc-label-sheet",
+      "card-deck-box",
     ]);
     const project = createPackCadSampleProject("live-mailer-box");
     expect(project.design?.name).toBe("MailerBox");
@@ -34,12 +31,9 @@ describe("PackCAD sample library", () => {
     ["curved-box", "curvedbox", 202, 80],
     ["pillow-box", "pillowbox", 176, 67],
     ["side-load-vhs", "Side-load VHS Slipcover", 28, 11],
-    ["vhs-slipcover", "VHS Slipcover", 16, 7],
+    ["vhs-slipcover", "VHS Slipcover", 64, 9],
     ["betamax-slipcover", "Betamax Slipcover", 16, 7],
-    ["vhs-face-label-sheet", "VHS Face Label Sheet", 40, 10],
-    ["vhs-spine-label-sheet", "VHS Spine Label Sheet", 60, 15],
-    ["cassette-label-sheet", "Cassette Label Sheet", 28, 12],
-    ["minidisc-label-sheet", "MiniDisc Label Sheet", 96, 24],
+    ["card-deck-box", "Playing Card Tuck Box", 60, 13],
   ] as const)(
     "loads %s with its source geometry",
     (sampleId, designName, vertices, faces) => {

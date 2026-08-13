@@ -9,7 +9,11 @@ import { BufferGeometry, Color, Float32BufferAttribute } from "three";
 import { triangulateFace } from "@atelier/geometry";
 import type { FoldModel } from "@packcad/format";
 import { applyTransforms, weldedBounds } from "@packcad/fold-solver";
-import { solveFoldTimeline, type FoldTimelineSolve } from "@packcad/fold-solver";
+import {
+  creaseAnglesForTimeline,
+  solveFoldTimeline,
+  type FoldTimelineSolve,
+} from "@packcad/fold-solver";
 import {
   offsetExtents,
   thicknessMillimetresToFoldUnits,
@@ -139,6 +143,140 @@ function weightedV3(
   ];
 }
 
+function foldRatioForStep(model: FoldModel, foldStepIndex: number, foldAngle: number): number {
+  if (foldStepIndex <= 0) return 0;
+  const keyframe = model.keyframes[foldStepIndex - 1];
+  const target = keyframe
+    ? Math.max(1, ...Object.values(keyframe.creaseAnglesDeg).map((angle) => Math.abs(angle)))
+    : 1;
+  return Math.max(0, Math.min(1, Math.abs(foldAngle) / target));
+}
+
+function interiorFaceActivationStep(model: FoldModel, faceIndex: number): number | null {
+  for (let keyframeIndex = 0; keyframeIndex < model.keyframes.length; keyframeIndex += 1) {
+    const activeEdges = new Set(Object.keys(model.keyframes[keyframeIndex].creaseAnglesDeg).map(Number));
+    const foldsFace = model.facesEdges[faceIndex]?.some(
+      (edgeIndex) => activeEdges.has(edgeIndex) && (model.edgeFaces[edgeIndex]?.length ?? 0) > 1,
+    );
+    if (foldsFace) return keyframeIndex + 1;
+  }
+  return null;
+}
+
+function activeInteriorFaces(model: FoldModel, foldStepIndex: number): Set<number> {
+  return new Set(
+    (model.interiorFaceIndices ?? []).filter((faceIndex) => {
+      const activationStep = interiorFaceActivationStep(model, faceIndex);
+      return activationStep !== null && foldStepIndex >= activationStep;
+    }),
+  );
+}
+
+/**
+ * Interior flaps overlap an exterior wall at their solved 90-degree position.
+ * Move their complete board slab one stock thickness into the folded shell so
+ * the exterior panel wins the physical layer order instead of z-fighting with
+ * a coincident mid-surface. The displacement direction is resolved separately
+ * from the rendered winding by choosing the face-normal branch that points
+ * toward the folded model's center/cavity.
+ */
+function interiorFaceLayerAmounts(
+  model: FoldModel,
+  projection: FoldProjection,
+  foldStepIndex: number,
+  foldAngle: number,
+  visualThickness: number,
+): number[] {
+  const amounts = model.facesVertices.map(() => 0);
+  if (projection !== "folded-3d" || visualThickness <= 0) return amounts;
+  const angles = creaseAnglesForTimeline(
+    model,
+    foldStepIndex,
+    foldRatioForStep(model, foldStepIndex, foldAngle),
+  );
+  for (const faceIndex of model.interiorFaceIndices ?? []) {
+    let amount = 0;
+    for (const edgeIndex of model.facesEdges[faceIndex] ?? []) {
+      if ((model.edgeFaces[edgeIndex]?.length ?? 0) < 2) continue;
+      const target = Math.max(
+        1,
+        ...model.keyframes.map((keyframe) => Math.abs(keyframe.creaseAnglesDeg[edgeIndex] ?? 0)),
+      );
+      amount = Math.max(amount, Math.min(1, Math.abs(angles[edgeIndex] ?? 0) / target));
+    }
+    // A mathematically exact one-thickness overlap leaves the two sheet
+    // surfaces coplanar. Give nested flaps half a stock of clearance so their
+    // cut outlines cannot leak through the enclosing wall at oblique angles.
+    amounts[faceIndex] = visualThickness * 1.5 * amount;
+  }
+  return amounts;
+}
+
+function interiorFaceLayerDisplacements(
+  model: FoldModel,
+  scenePositions: V3[],
+  faceNormals: V3[],
+  layerAmounts: number[],
+): V3[] {
+  const modelCenter = scenePositions.reduce<V3>(
+    (sum, point) => [
+      sum[0] + point[0] / scenePositions.length,
+      sum[1] + point[1] / scenePositions.length,
+      sum[2] + point[2] / scenePositions.length,
+    ],
+    [0, 0, 0],
+  );
+  return model.facesVertices.map((loop, faceIndex) => {
+    const amount = layerAmounts[faceIndex] ?? 0;
+    if (amount <= 0 || loop.length === 0) return [0, 0, 0];
+    const faceCenter = loop.reduce<V3>(
+      (sum, vertexIndex) => {
+        const point = scenePositions[vertexIndex];
+        return [
+          sum[0] + point[0] / loop.length,
+          sum[1] + point[1] / loop.length,
+          sum[2] + point[2] / loop.length,
+        ];
+      },
+      [0, 0, 0],
+    );
+    const normal = faceNormals[faceIndex];
+    const towardCenter = v3sub(modelCenter, faceCenter);
+    const inwardNormal = v3dot(normal, towardCenter) >= 0 ? normal : v3scale(normal, -1);
+    return v3scale(inwardNormal, amount);
+  });
+}
+
+function cavitySurfaceNormalSign(
+  model: FoldModel,
+  scenePositions: V3[],
+  faceNormals: V3[],
+  faceIndex: number,
+): number {
+  const modelCenter = scenePositions.reduce<V3>(
+    (sum, point) => [
+      sum[0] + point[0] / scenePositions.length,
+      sum[1] + point[1] / scenePositions.length,
+      sum[2] + point[2] / scenePositions.length,
+    ],
+    [0, 0, 0],
+  );
+  const loop = model.facesVertices[faceIndex] ?? [];
+  if (loop.length === 0) return 1;
+  const faceCenter = loop.reduce<V3>(
+    (sum, vertexIndex) => {
+      const point = scenePositions[vertexIndex];
+      return [
+        sum[0] + point[0] / loop.length,
+        sum[1] + point[1] / loop.length,
+        sum[2] + point[2] / loop.length,
+      ];
+    },
+    [0, 0, 0],
+  );
+  return v3dot(faceNormals[faceIndex], v3sub(modelCenter, faceCenter)) >= 0 ? 1 : -1;
+}
+
 const SCENE_EXTENT = 3; // post-normalization target span (foldSceneFrame scales to this)
 // PackCAD extrudes the full authored board thickness in graph units (verified
 // in the reference bundle: GraphVisInstance3D uses the thickness verbatim, and
@@ -149,10 +287,10 @@ const SCENE_EXTENT = 3; // post-normalization target span (foldSceneFrame scales
 // in double-wall rails that the source shows tightly packed.
 export const SOURCE_THICKNESS_DISPLAY_SCALE = 1;
 // Line epsilon above the front slab surface. Keep this tiny: the fat-line
-// material already applies polygonOffset(-2) for depth separation, and a large
-// geometric lift reads as outlines floating off the board at close zoom
-// (0.006 was nearly half a board thickness); the source pins its edge lines to
-// the surface with depth-only offsets.
+// material uses the actual depth buffer, and a large geometric lift reads as
+// outlines floating off the board at close zoom (0.006 was nearly half a board
+// thickness). Keeping this tiny prevents an interior line from punching through
+// the exterior sheet while still avoiding coplanar edge z-fighting.
 const CREASE_LINE_SURFACE_OFFSET = 0.0008;
 const LOCKED_TINT_OFFSET = 0.004; // tint sits under the lines, above the face
 const SELECTED_TINT_OFFSET = 0.005;
@@ -236,11 +374,15 @@ type FoldVertexPositionRecipe =
 type FoldEdgePositionLayout = {
   edgeIndex: number;
   faceIndices: number[];
+  surfaceNormalSigns: number[];
+  surfaceLift: number;
+  interiorRibbonPositionOffset?: number;
   frontAIndices: number[];
   frontBIndices: number[];
   pickPositionOffset: number;
   selectedPositionOffset: number;
   solidPositionOffset?: number;
+  occludedPositionOffset?: number;
   creasePositionOffset?: number;
   dashedPositionOffset?: number;
   dashedDistanceOffset?: number;
@@ -250,6 +392,7 @@ type FoldScenePositionLayout = {
   model: FoldModel;
   projection: FoldProjection;
   frame: ReturnType<typeof foldSceneFrame>;
+  visualThickness: number;
   /** Per-face alignment of the Newell loop normal to the rendered winding. */
   faceNormalSigns: number[];
   meshRecipes: FoldVertexPositionRecipe[];
@@ -275,6 +418,8 @@ export type FoldSceneMeta = {
   flipAll: boolean;
   /** Physical board thickness after conversion into normalized scene units. */
   visualThickness: number;
+  /** Interior panels physically inset behind the adjoining exterior sheet. */
+  interiorLayerFaceCount: number;
 };
 
 export type FoldSceneData = {
@@ -292,6 +437,10 @@ export type FoldSceneData = {
   selectedTintGeometry: BufferGeometry | null;
   /** cut boundaries, solid; LineSegments + vertex colors. */
   solidEdgeGeometry: BufferGeometry;
+  /** Cavity-facing cut outlines for authored interior flaps. */
+  interiorEdgeGeometry: BufferGeometry;
+  /** authored interior edges drawn only by the translucent occlusion pass. */
+  occludedEdgeGeometry: BufferGeometry;
   /** solid crease edges; LineSegments + vertex colors. */
   creaseEdgeGeometry: BufferGeometry;
   /** dashed crease edges; LineSegments + vertex colors + lineDistance. */
@@ -349,20 +498,28 @@ function hingeBendPoint(
   scenePositions: V3[],
   faceNormals: V3[],
   recipe: Extract<FoldVertexPositionRecipe, { kind: "bend" }>,
+  faceLayerDisplacements: V3[],
 ): V3 {
   const base = scenePositions[recipe.vertexIndex];
   const normalA = faceNormals[recipe.faceAIndex];
   const normalB = faceNormals[recipe.faceBIndex];
-  if (Math.abs(recipe.normalOffset) <= 1e-9) return base;
+  const displacementA = faceLayerDisplacements[recipe.faceAIndex] ?? [0, 0, 0];
+  const displacementB = faceLayerDisplacements[recipe.faceBIndex] ?? [0, 0, 0];
+  const layerDisplacement: V3 = [
+    displacementA[0] * (1 - recipe.bendT) + displacementB[0] * recipe.bendT,
+    displacementA[1] * (1 - recipe.bendT) + displacementB[1] * recipe.bendT,
+    displacementA[2] * (1 - recipe.bendT) + displacementB[2] * recipe.bendT,
+  ];
+  if (Math.abs(recipe.normalOffset) <= 1e-9) return v3add(base, layerDisplacement);
   const axisRaw = v3sub(scenePositions[recipe.otherVertexIndex], base);
   const axisLength = v3len(axisRaw);
   if (axisLength <= 1e-9) {
-    return v3add(base, v3scale(normalA, recipe.normalOffset));
+    return v3add(v3add(base, v3scale(normalA, recipe.normalOffset)), layerDisplacement);
   }
   const axis = v3scale(axisRaw, 1 / axisLength);
   const angle = Math.acos(Math.max(-1, Math.min(1, v3dot(normalA, normalB))));
   if (angle < 1e-6) {
-    return v3add(base, v3scale(normalA, recipe.normalOffset));
+    return v3add(v3add(base, v3scale(normalA, recipe.normalOffset)), layerDisplacement);
   }
   const forward = rotateAboutAxis(normalA, axis, angle);
   const backward = rotateAboutAxis(normalA, axis, -angle);
@@ -379,7 +536,7 @@ function hingeBendPoint(
     direction = v3dot(halfway, inPlane) <= 0 ? 1 : -1;
   }
   const normal = rotateAboutAxis(normalA, axis, direction * angle * recipe.bendT);
-  return v3add(base, v3scale(normal, recipe.normalOffset));
+  return v3add(v3add(base, v3scale(normal, recipe.normalOffset)), layerDisplacement);
 }
 
 /**
@@ -517,6 +674,22 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       * SOURCE_THICKNESS_DISPLAY_SCALE
     : 0;
   const { front: fOff, back: bOff } = offsetExtents(visualThickness, direction);
+  const faceLayerAmounts = interiorFaceLayerAmounts(
+    model,
+    projection,
+    foldStepIndex,
+    foldAngle,
+    visualThickness,
+  );
+  const interiorFacesInFlight = activeInteriorFaces(model, foldStepIndex);
+  // Edge ownership must not depend on playback timing. Restored projects can
+  // already contain a solved 3D pose while the timeline is still settling on
+  // its saved step; in that window, classifying by the active step puts the
+  // closure-flap outlines back into the exterior/ghost line pass. Authored
+  // interior faces always own cavity-only outlines in 3D.
+  const interiorOutlineFaces = projection === "folded-3d"
+    ? new Set(model.interiorFaceIndices ?? [])
+    : new Set<number>();
 
   const positions: number[] = [];
   const meshRecipes: FoldVertexPositionRecipe[] = [];
@@ -644,23 +817,30 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   });
   const faceNormals = rawNormals.map((n, faceIndex) =>
     faceNormalSigns[faceIndex] < 0 ? v3scale(n, -1) : n);
+  const faceLayerDisplacements = interiorFaceLayerDisplacements(
+    model,
+    scenePositions,
+    faceNormals,
+    faceLayerAmounts,
+  );
 
   // Per-face front/back vertex slabs + triangles.
   const faceData = model.facesVertices.map((loop, faceIndex) => {
     const nrm = faceNormals[faceIndex];
+    const layerDisplacement = faceLayerDisplacements[faceIndex] ?? [0, 0, 0];
     const faceColor = panelColorMode === "multicolor" ? faceColors[faceIndex] : white;
     const front = new Map<number, number>();
     const back = new Map<number, number>();
     for (const vi of loop) {
       const base = scenePositions[vi] as V3;
       front.set(vi, pushVert(
-        v3add(base, v3scale(nrm, fOff)),
+        v3add(v3add(base, v3scale(nrm, fOff)), layerDisplacement),
         uvOf(vi),
         { kind: "face", vertexIndex: vi, faceIndex, normalOffset: fOff },
         faceColor,
       ));
       back.set(vi, pushVert(
-        v3add(base, v3scale(nrm, bOff)),
+        v3add(v3add(base, v3scale(nrm, bOff)), layerDisplacement),
         uvOf(vi),
         { kind: "face", vertexIndex: vi, faceIndex, normalOffset: bOff },
         faceColor,
@@ -696,6 +876,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     if (adjacentFaces.length !== 1) return;
     const faceIndex = adjacentFaces[0];
     const face = faceData[faceIndex];
+    const layerDisplacement = faceLayerDisplacements[faceIndex] ?? [0, 0, 0];
     const [va, vb] = model.edgesVertices[edgeIndex];
     const start = model.verticesCoords[va];
     const end = model.verticesCoords[vb];
@@ -721,13 +902,13 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       const frontPoint = facePoint(faceIndex, flatPoint, fOff, boundaryEdge);
       const backPoint = facePoint(faceIndex, flatPoint, bOff, boundaryEdge);
       frontCurve.push(pushVert(
-        v3add(frontPoint.position, v3scale(face.nrm, fOff)),
+        v3add(v3add(frontPoint.position, v3scale(face.nrm, fOff)), layerDisplacement),
         frontPoint.uv,
         frontPoint.recipe,
         faceColor,
       ));
       backCurve.push(pushVert(
-        v3add(backPoint.position, v3scale(face.nrm, bOff)),
+        v3add(v3add(backPoint.position, v3scale(face.nrm, bOff)), layerDisplacement),
         backPoint.uv,
         backPoint.recipe,
         faceColor,
@@ -837,7 +1018,12 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         bendT,
       };
       return {
-        position: hingeBendPoint(scenePositions as V3[], faceNormals, recipe),
+        position: hingeBendPoint(
+          scenePositions as V3[],
+          faceNormals,
+          recipe,
+          faceLayerDisplacements,
+        ),
         recipe,
       };
     };
@@ -889,7 +1075,12 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
         bendT,
       };
       return {
-        position: hingeBendPoint(scenePositions as V3[], faceNormals, recipe),
+        position: hingeBendPoint(
+          scenePositions as V3[],
+          faceNormals,
+          recipe,
+          faceLayerDisplacements,
+        ),
         recipe,
       };
     };
@@ -927,6 +1118,11 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       const fcs = model.edgeFaces[ei];
       if (fcs.length === 1) {
         if (replacedClosedSeamSidebandEdges.has(ei)) return;
+        // A nested flap's cut band is enclosed by the cover wall. Rendering
+        // that vertical band lets it protrude through the exterior depth
+        // plane at grazing angles; its cavity-facing ribbon below supplies the
+        // visible inner outline without exposing the band outside.
+        if (projection === "folded-3d" && interiorFacesInFlight.has(fcs[0])) return;
         const A = faceData[fcs[0]];
         const flip = boundaryEdgeFlip(fcs[0], va, vb);
         const curved = curvedEdgeRender.get(ei);
@@ -1015,23 +1211,26 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // --- unified edge lines ----------------------------------------------------
   const solidPos: number[] = [];
   const solidCol: number[] = [];
+  const occludedPos: number[] = [];
+  const occludedCol: number[] = [];
   const creasePos: number[] = [];
   const creaseCol: number[] = [];
   const dashedPos: number[] = [];
   const dashedCol: number[] = [];
   const dashedDist: number[] = [];
   const pickPos: number[] = [];
+  const interiorRibbonPos: number[] = [];
   const segmentEdgeIndex: number[] = [];
   const positionsByEdge = new Map<number, number[]>();
   const edgeLayouts: FoldEdgePositionLayout[] = [];
   const lift = CREASE_LINE_SURFACE_OFFSET;
   let creaseLineCount = 0;
-
   const addRenderedEdgeSegment = (
     ei: number,
     fcs: number[],
     frontAIndices: number[],
     frontBIndices: number[],
+    surfaceNormalSigns: number[],
   ) => {
     if (fcs.length === 0) return;
     const style = resolveEdgeStyle(
@@ -1050,6 +1249,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     for (let faceOffset = 0; faceOffset < fcs.length; faceOffset += 1) {
       const faceIndex = fcs[faceOffset];
       const face = faceData[faceIndex];
+      const surfaceNormalSign = surfaceNormalSigns[faceOffset] ?? 1;
       const aIndex = frontAIndices[faceOffset];
       const bIndex = frontBIndices[faceOffset];
       if (aIndex === undefined || bIndex === undefined) continue;
@@ -1057,11 +1257,18 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       const pb = positionAt(bIndex);
       ax += pa[0]; ay += pa[1]; az += pa[2];
       bx += pb[0]; by += pb[1]; bz += pb[2];
-      nx += face.nrm[0]; ny += face.nrm[1]; nz += face.nrm[2];
+      nx += face.nrm[0] * surfaceNormalSign;
+      ny += face.nrm[1] * surfaceNormalSign;
+      nz += face.nrm[2] * surfaceNormalSign;
       count += 1;
     }
     if (count === 0) return;
-    const lifted = v3scale(v3norm([nx, ny, nz]), lift);
+    const surfaceLift = projection === "folded-3d"
+      && fcs.some((faceIndex) => interiorOutlineFaces.has(faceIndex))
+      ? Math.max(lift, visualThickness * 0.5)
+      : lift;
+    const surfaceNormal = v3norm([nx, ny, nz]);
+    const lifted = v3scale(surfaceNormal, surfaceLift);
     const A = v3add([ax / count, ay / count, az / count] as V3, lifted);
     const B = v3add([bx / count, by / count, bz / count] as V3, lifted);
 
@@ -1069,6 +1276,8 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     const edgeLayout: FoldEdgePositionLayout = {
       edgeIndex: ei,
       faceIndices: [...fcs],
+      surfaceNormalSigns: [...surfaceNormalSigns],
+      surfaceLift,
       frontAIndices,
       frontBIndices,
       pickPositionOffset: pickPos.length,
@@ -1083,9 +1292,17 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     if (!c) return;
     const isBoundary = model.edgesAssignment[ei] === "B" || fcs.length < 2;
     if (isBoundary) {
-      edgeLayout.solidPositionOffset = solidPos.length;
-      solidPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
-      solidCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      const isNestedBoundary = projection === "folded-3d"
+        && fcs.length === 1
+        && interiorOutlineFaces.has(fcs[0]);
+      if (isNestedBoundary) {
+        edgeLayout.interiorRibbonPositionOffset = interiorRibbonPos.length;
+        interiorRibbonPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
+      } else {
+        edgeLayout.solidPositionOffset = solidPos.length;
+        solidPos.push(A[0], A[1], A[2], B[0], B[1], B[2]);
+        solidCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      }
     } else if (style.dashed) {
       edgeLayout.dashedPositionOffset = dashedPos.length;
       edgeLayout.dashedDistanceOffset = dashedDist.length;
@@ -1110,25 +1327,42 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     if (fcs.length === 0) return;
     const curved = curvedEdgeRender.get(ei);
     if (curved) {
-      for (let segment = 0; segment + 1 < curved.frontIndices.length; segment += 1) {
+      const isInteriorSurface = projection === "folded-3d"
+        && interiorOutlineFaces.has(curved.faceIndex);
+      const surfaceNormalSign = isInteriorSurface
+        ? cavitySurfaceNormalSign(model, scenePositions, faceNormals, curved.faceIndex)
+        : 1;
+      const surfaceIndices = !isInteriorSurface || surfaceNormalSign > 0
+        ? curved.frontIndices
+        : curved.backIndices;
+      for (let segment = 0; segment + 1 < surfaceIndices.length; segment += 1) {
         addRenderedEdgeSegment(
           ei,
           [curved.faceIndex],
-          [curved.frontIndices[segment]],
-          [curved.frontIndices[segment + 1]],
+          [surfaceIndices[segment]],
+          [surfaceIndices[segment + 1]],
+          [surfaceNormalSign],
         );
       }
       return;
     }
+    const surfaceInfo = fcs.map((faceIndex) => {
+      const isInteriorSurface = projection === "folded-3d"
+        && interiorOutlineFaces.has(faceIndex);
+      const surfaceNormalSign = isInteriorSurface
+        ? cavitySurfaceNormalSign(model, scenePositions, faceNormals, faceIndex)
+        : 1;
+      const surface = !isInteriorSurface || surfaceNormalSign > 0
+        ? faceData[faceIndex].front
+        : faceData[faceIndex].back;
+      return { surface, surfaceNormalSign };
+    });
     addRenderedEdgeSegment(
       ei,
       fcs,
-      fcs
-        .map((faceIndex) => faceData[faceIndex].front.get(va))
-        .filter((index): index is number => index !== undefined),
-      fcs
-        .map((faceIndex) => faceData[faceIndex].front.get(vb))
-        .filter((index): index is number => index !== undefined),
+      surfaceInfo.map(({ surface }) => surface.get(va)!),
+      surfaceInfo.map(({ surface }) => surface.get(vb)!),
+      surfaceInfo.map(({ surfaceNormalSign }) => surfaceNormalSign),
     );
   });
 
@@ -1202,9 +1436,13 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       fOff + LOCKED_ICON_OFFSET,
       bOff - LOCKED_ICON_OFFSET,
     ]) {
+      const layerDisplacement = faceLayerDisplacements[faceIndex] ?? [0, 0, 0];
       const anchor = v3add(
-        weightedV3(scenePositions, vertexIndices, weights),
-        v3scale(face.nrm, normalOffset),
+        v3add(
+          weightedV3(scenePositions, vertexIndices, weights),
+          v3scale(face.nrm, normalOffset),
+        ),
+        layerDisplacement,
       );
       lockedIconPositions.push(anchor[0], anchor[1] - minY, anchor[2]);
       lockedIconRecipes.push({
@@ -1286,6 +1524,13 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   solidEdgeGeometry.setAttribute("position", new Float32BufferAttribute(solidPos, 3));
   solidEdgeGeometry.setAttribute("color", new Float32BufferAttribute(solidCol, 3));
 
+  const interiorEdgeGeometry = new BufferGeometry();
+  interiorEdgeGeometry.setAttribute("position", new Float32BufferAttribute(interiorRibbonPos, 3));
+
+  const occludedEdgeGeometry = new BufferGeometry();
+  occludedEdgeGeometry.setAttribute("position", new Float32BufferAttribute(occludedPos, 3));
+  occludedEdgeGeometry.setAttribute("color", new Float32BufferAttribute(occludedCol, 3));
+
   const creaseEdgeGeometry = new BufferGeometry();
   creaseEdgeGeometry.setAttribute("position", new Float32BufferAttribute(creasePos, 3));
   creaseEdgeGeometry.setAttribute("color", new Float32BufferAttribute(creaseCol, 3));
@@ -1305,6 +1550,8 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
     lockedIconGeometry,
     selectedTintGeometry: selectedTint.geometry,
     solidEdgeGeometry,
+    interiorEdgeGeometry,
+    occludedEdgeGeometry,
     creaseEdgeGeometry,
     dashedEdgeGeometry,
     edgePickGeometry,
@@ -1329,11 +1576,13 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
       lockedFaceCount: lockedFaces.size,
       flipAll,
       visualThickness,
+      interiorLayerFaceCount: interiorFacesInFlight.size,
     },
     positionLayout: {
       model,
       projection,
       frame,
+      visualThickness,
       faceNormalSigns,
       meshRecipes,
       lockedTintRecipes: lockedTint.recipes,
@@ -1350,9 +1599,10 @@ function writeRecipePosition(
   recipe: FoldVertexPositionRecipe,
   scenePositions: V3[],
   faceNormals: V3[],
+  faceLayerDisplacements: V3[],
 ): void {
   if (recipe.kind === "bend") {
-    const point = hingeBendPoint(scenePositions, faceNormals, recipe);
+    const point = hingeBendPoint(scenePositions, faceNormals, recipe, faceLayerDisplacements);
     target[offset] = point[0];
     target[offset + 1] = point[1];
     target[offset + 2] = point[2];
@@ -1378,9 +1628,12 @@ function writeRecipePosition(
     target[offset + 2] = point[2];
     return;
   }
-  target[offset] = base[0] + normal[0] * recipe.normalOffset;
-  target[offset + 1] = base[1] + normal[1] * recipe.normalOffset;
-  target[offset + 2] = base[2] + normal[2] * recipe.normalOffset;
+  const layerDisplacement = recipe.kind === "face" || recipe.kind === "facePoint"
+    ? faceLayerDisplacements[recipe.faceIndex] ?? [0, 0, 0]
+    : [0, 0, 0];
+  target[offset] = base[0] + normal[0] * recipe.normalOffset + layerDisplacement[0];
+  target[offset + 1] = base[1] + normal[1] * recipe.normalOffset + layerDisplacement[1];
+  target[offset + 2] = base[2] + normal[2] * recipe.normalOffset + layerDisplacement[2];
 }
 
 function updateRecipeGeometry(
@@ -1388,6 +1641,7 @@ function updateRecipeGeometry(
   recipes: FoldVertexPositionRecipe[],
   scenePositions: V3[],
   faceNormals: V3[],
+  faceLayerDisplacements: V3[],
   groundOffset: number,
   computeNormals = true,
 ): void {
@@ -1402,6 +1656,7 @@ function updateRecipeGeometry(
       recipes[index],
       scenePositions,
       faceNormals,
+      faceLayerDisplacements,
     );
     positions[offset + 1] -= groundOffset;
   }
@@ -1472,6 +1727,19 @@ export function updateFoldScenePositions(
     const sign = data.positionLayout.faceNormalSigns[faceIndex] ?? 1;
     return v3norm([nx * sign, ny * sign, nz * sign]);
   });
+  const faceLayerAmounts = interiorFaceLayerAmounts(
+    model,
+    projection,
+    input.foldStepIndex,
+    input.foldAngle,
+    data.positionLayout.visualThickness,
+  );
+  const faceLayerDisplacements = interiorFaceLayerDisplacements(
+    model,
+    scenePositions,
+    faceNormals,
+    faceLayerAmounts,
+  );
 
   const meshAttribute = data.geometry.getAttribute("position");
   const meshPositions = meshAttribute.array as Float32Array;
@@ -1482,6 +1750,7 @@ export function updateFoldScenePositions(
       data.positionLayout.meshRecipes[index],
       scenePositions,
       faceNormals,
+      faceLayerDisplacements,
     );
   }
   let minY = Infinity;
@@ -1511,6 +1780,7 @@ export function updateFoldScenePositions(
     data.positionLayout.lockedTintRecipes,
     scenePositions,
     faceNormals,
+    faceLayerDisplacements,
     groundOffset,
   );
   updateRecipeGeometry(
@@ -1518,6 +1788,7 @@ export function updateFoldScenePositions(
     data.positionLayout.lockedIconRecipes,
     scenePositions,
     faceNormals,
+    faceLayerDisplacements,
     groundOffset,
     false,
   );
@@ -1526,11 +1797,16 @@ export function updateFoldScenePositions(
     data.positionLayout.selectedTintRecipes,
     scenePositions,
     faceNormals,
+    faceLayerDisplacements,
     groundOffset,
   );
 
   const solidAttribute = data.solidEdgeGeometry.getAttribute("position");
   const solidPositions = solidAttribute.array as Float32Array;
+  const interiorAttribute = data.interiorEdgeGeometry.getAttribute("position");
+  const interiorPositions = interiorAttribute.array as Float32Array;
+  const occludedAttribute = data.occludedEdgeGeometry.getAttribute("position");
+  const occludedPositions = occludedAttribute.array as Float32Array;
   const creaseAttribute = data.creaseEdgeGeometry.getAttribute("position");
   const creasePositions = creaseAttribute.array as Float32Array;
   const dashedAttribute = data.dashedEdgeGeometry.getAttribute("position");
@@ -1555,11 +1831,13 @@ export function updateFoldScenePositions(
       b[1] += meshPositions[bOffset + 1];
       b[2] += meshPositions[bOffset + 2];
       const faceNormal = faceNormals[edge.faceIndices[index]];
-      normal[0] += faceNormal[0];
-      normal[1] += faceNormal[1];
-      normal[2] += faceNormal[2];
+      const surfaceNormalSign = edge.surfaceNormalSigns[index] ?? 1;
+      normal[0] += faceNormal[0] * surfaceNormalSign;
+      normal[1] += faceNormal[1] * surfaceNormalSign;
+      normal[2] += faceNormal[2] * surfaceNormalSign;
     }
-    const lifted = v3scale(v3norm(normal), CREASE_LINE_SURFACE_OFFSET);
+    const surfaceNormal = v3norm(normal);
+    const lifted = v3scale(surfaceNormal, edge.surfaceLift);
     a[0] = a[0] / count + lifted[0];
     a[1] = a[1] / count + lifted[1];
     a[2] = a[2] / count + lifted[2];
@@ -1574,6 +1852,12 @@ export function updateFoldScenePositions(
     if (edge.solidPositionOffset !== undefined) {
       writeLineSegment(solidPositions, edge.solidPositionOffset, a, b);
     }
+    if (edge.interiorRibbonPositionOffset !== undefined) {
+      writeLineSegment(interiorPositions, edge.interiorRibbonPositionOffset, a, b);
+    }
+    if (edge.occludedPositionOffset !== undefined) {
+      writeLineSegment(occludedPositions, edge.occludedPositionOffset, a, b);
+    }
     if (edge.creasePositionOffset !== undefined) {
       writeLineSegment(creasePositions, edge.creasePositionOffset, a, b);
     }
@@ -1586,12 +1870,18 @@ export function updateFoldScenePositions(
     }
   }
   solidAttribute.needsUpdate = true;
+  interiorAttribute.needsUpdate = true;
+  occludedAttribute.needsUpdate = true;
   creaseAttribute.needsUpdate = true;
   dashedAttribute.needsUpdate = true;
   dashedDistanceAttribute.needsUpdate = true;
   pickAttribute.needsUpdate = true;
   data.solidEdgeGeometry.computeBoundingBox();
   data.solidEdgeGeometry.computeBoundingSphere();
+  data.interiorEdgeGeometry.computeBoundingBox();
+  data.interiorEdgeGeometry.computeBoundingSphere();
+  data.occludedEdgeGeometry.computeBoundingBox();
+  data.occludedEdgeGeometry.computeBoundingSphere();
   data.creaseEdgeGeometry.computeBoundingBox();
   data.creaseEdgeGeometry.computeBoundingSphere();
   data.dashedEdgeGeometry.computeBoundingBox();

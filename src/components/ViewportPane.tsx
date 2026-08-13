@@ -12,6 +12,7 @@ import {
   GridHelper,
   Group,
   LinearFilter,
+  LessDepth,
   LineBasicMaterial,
   LineSegments,
   Mesh,
@@ -103,6 +104,7 @@ const SOURCE_2D_CREASE_LINE_WIDTH = 2;
 // depth testing disabled at MESH_EDGE_OCCLUSION_OPACITY = 0.1, so every cut
 // and crease ghosts faintly through the shell in all shading modes.
 const SOURCE_OCCLUDED_EDGE_OPACITY = 0.1;
+const TECHNICAL_INTERIOR_EDGE_OPACITY = 0.42;
 
 interface ViewportPaneProps {
   project: PackagingProject;
@@ -136,6 +138,8 @@ function disposeSceneData(data: FoldSceneData): void {
   data.lockedIconGeometry?.dispose();
   data.selectedTintGeometry?.dispose();
   data.solidEdgeGeometry.dispose();
+  data.interiorEdgeGeometry.dispose();
+  data.occludedEdgeGeometry.dispose();
   data.creaseEdgeGeometry.dispose();
   data.dashedEdgeGeometry.dispose();
   data.edgePickGeometry.dispose();
@@ -234,9 +238,6 @@ function createFatEdges(
     depthWrite: false,
     transparent: true,
     opacity: options.opacity ?? 1,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
   });
   if (options.depthFunc !== undefined) material.depthFunc = options.depthFunc;
   material.resolution.set(
@@ -358,6 +359,7 @@ export function ViewportPane({
   const hoverLineRef = useRef<FatEdges | null>(null);
   const selectedLineRef = useRef<FatEdges | null>(null);
   const solidEdgesRef = useRef<FatEdges | null>(null);
+  const interiorEdgesRef = useRef<FatEdges | null>(null);
   const creaseEdgesRef = useRef<FatEdges | null>(null);
   const dashedEdgesRef = useRef<FatEdges | null>(null);
   const ghostEdgesRef = useRef<FatEdges[]>([]);
@@ -740,12 +742,15 @@ export function ViewportPane({
     if (!data || !model || !viewport || viewMode === "2d") return;
     updateFoldScenePositions(data, foldPositionInputRef.current);
     updateFatEdgePositions(solidEdgesRef.current, data.solidEdgeGeometry);
+    updateFatEdgePositions(interiorEdgesRef.current, data.interiorEdgeGeometry);
     updateFatEdgePositions(creaseEdgesRef.current, data.creaseEdgeGeometry);
     updateFatEdgePositions(dashedEdgesRef.current, data.dashedEdgeGeometry);
-    const [ghostSolid, ghostCrease, ghostDashed] = ghostEdgesRef.current;
+    const [ghostSolid, ghostCrease, ghostDashed, ghostOccluded, ghostInterior] = ghostEdgesRef.current;
     updateFatEdgePositions(ghostSolid ?? null, data.solidEdgeGeometry);
     updateFatEdgePositions(ghostCrease ?? null, data.creaseEdgeGeometry);
     updateFatEdgePositions(ghostDashed ?? null, data.dashedEdgeGeometry);
+    updateFatEdgePositions(ghostOccluded ?? null, data.occludedEdgeGeometry);
+    updateFatEdgePositions(ghostInterior ?? null, data.interiorEdgeGeometry);
     updateFatEdgePositionArray(
       selectedLineRef.current,
       selectedFoldEdgeIndexRef.current === null
@@ -916,15 +921,25 @@ export function ViewportPane({
     const solidEdges = createFatEdges(data.solidEdgeGeometry, viewport, {
       linewidth: cutLineWidth,
       depthTest: viewMode !== "2d",
+      depthFunc: viewMode === "3d" ? LessDepth : undefined,
+    });
+    const interiorEdges = createFatEdges(data.interiorEdgeGeometry, viewport, {
+      color: "#191719",
+      linewidth: cutLineWidth,
+      depthTest: viewMode !== "2d",
+      depthFunc: viewMode === "3d" ? LessDepth : undefined,
+      renderOrder: 3,
     });
     const creaseEdges = createFatEdges(data.creaseEdgeGeometry, viewport, {
       linewidth: creaseLineWidth,
       depthTest: viewMode !== "2d",
+      depthFunc: viewMode === "3d" ? LessDepth : undefined,
     });
     const dashedEdges = createFatEdges(data.dashedEdgeGeometry, viewport, {
       dashed: true,
       linewidth: creaseLineWidth,
       depthTest: viewMode !== "2d",
+      depthFunc: viewMode === "3d" ? LessDepth : undefined,
     });
     // PackCAD's graphEdgesTransparencyPass3D: after the visible edges render,
     // the same edge layer draws again without depth testing at 10% opacity,
@@ -951,9 +966,25 @@ export function ViewportPane({
             opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
             renderOrder: 4,
           }),
+          createFatEdges(data.occludedEdgeGeometry, viewport, {
+            linewidth: cutLineWidth,
+            depthTest: false,
+            opacity: SOURCE_OCCLUDED_EDGE_OPACITY,
+            renderOrder: 4,
+          }),
+          ...(project.renderMode === "technical"
+            ? [createFatEdges(data.interiorEdgeGeometry, viewport, {
+                color: "#191719",
+                linewidth: cutLineWidth,
+                depthTest: false,
+                opacity: TECHNICAL_INTERIOR_EDGE_OPACITY,
+                renderOrder: 5,
+              })]
+            : []),
         ]
       : [];
     solidEdgesRef.current = solidEdges;
+    interiorEdgesRef.current = interiorEdges;
     creaseEdgesRef.current = creaseEdges;
     dashedEdgesRef.current = dashedEdges;
     ghostEdgesRef.current = ghostEdges;
@@ -1054,6 +1085,7 @@ export function ViewportPane({
     for (const ghost of ghostEdges) group.add(ghost.line);
     group.add(
       solidEdges.line,
+      interiorEdges.line,
       creaseEdges.line,
       dashedEdges.line,
       edgePickLines,
@@ -1062,6 +1094,7 @@ export function ViewportPane({
     );
     const fatEdgeLayers = [
       solidEdges,
+      interiorEdges,
       creaseEdges,
       dashedEdges,
       ...ghostEdges,
@@ -1127,6 +1160,7 @@ export function ViewportPane({
       if (selectedLineRef.current === selectedLine) selectedLineRef.current = null;
       if (hoverLineRef.current === hoverLine) hoverLineRef.current = null;
       if (solidEdgesRef.current === solidEdges) solidEdgesRef.current = null;
+      if (interiorEdgesRef.current === interiorEdges) interiorEdgesRef.current = null;
       if (creaseEdgesRef.current === creaseEdges) creaseEdgesRef.current = null;
       if (dashedEdgesRef.current === dashedEdges) dashedEdgesRef.current = null;
       if (ghostEdgesRef.current === ghostEdges) ghostEdgesRef.current = [];
@@ -1143,6 +1177,8 @@ export function ViewportPane({
       viewport.scene.remove(group);
       solidEdges.geometry.dispose();
       solidEdges.material.dispose();
+      interiorEdges.geometry.dispose();
+      interiorEdges.material.dispose();
       creaseEdges.geometry.dispose();
       creaseEdges.material.dispose();
       dashedEdges.geometry.dispose();

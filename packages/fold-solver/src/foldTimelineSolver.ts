@@ -5,9 +5,13 @@ import {
   appendPriorTargets,
   sourceStageConstraintAngles,
 } from "./foldPlaybackConstraints";
-import type { Vec3 } from "./foldSolver";
+import {
+  creaseAnglesForTimeline,
+  foldFaces,
+  type Vec3,
+} from "./foldSolver";
 
-export type FoldTimelineSolveMethod = "flat" | "newton-sequence" | "source-iterative";
+export type FoldTimelineSolveMethod = "flat" | "rigid-tree" | "newton-sequence" | "source-iterative";
 
 export type FoldTimelineSolve = {
   positions: Vec3[];
@@ -37,6 +41,59 @@ function ratioForStep(model: FoldModel, foldStepIndex: number, foldAngle: number
   return Math.max(0, Math.min(1, foldAngle / targetMaxForStep(model, foldStepIndex)));
 }
 
+function rigidTreePositions(model: FoldModel, creaseAnglesDeg: Record<number, number>): Vec3[] {
+  const foldedFaces = foldFaces(model, creaseAnglesDeg);
+  const faceByIndex = new Map(foldedFaces.map((face) => [face.faceIndex, face]));
+  const positions = flatPositions(model);
+  const assigned = new Array<boolean>(positions.length).fill(false);
+  const visited = new Array<boolean>(model.facesVertices.length).fill(false);
+  const faceOrder: number[] = [];
+  const queue = [model.fixedFaceIndex];
+  visited[model.fixedFaceIndex] = true;
+  while (queue.length > 0) {
+    const faceIndex = queue.shift() as number;
+    faceOrder.push(faceIndex);
+    for (const edgeIndex of model.facesEdges[faceIndex]) {
+      for (const neighbor of model.edgeFaces[edgeIndex]) {
+        if (visited[neighbor]) continue;
+        visited[neighbor] = true;
+        queue.push(neighbor);
+      }
+    }
+  }
+  for (let faceIndex = 0; faceIndex < model.facesVertices.length; faceIndex += 1) {
+    if (!visited[faceIndex]) faceOrder.push(faceIndex);
+  }
+  for (const faceIndex of faceOrder) {
+    const face = faceByIndex.get(faceIndex);
+    if (!face) continue;
+    model.facesVertices[faceIndex].forEach((vertexIndex, localIndex) => {
+      if (assigned[vertexIndex]) return;
+      const point = face.positions[localIndex];
+      positions[vertexIndex] = [point[0], point[1], point[2]];
+      assigned[vertexIndex] = true;
+    });
+  }
+  return positions;
+}
+
+export function solveRigidFoldTimeline(
+  model: FoldModel,
+  foldStepIndex: number,
+  foldAngle: number,
+): FoldTimelineSolve {
+  const ratio = ratioForStep(model, foldStepIndex, foldAngle);
+  const creaseAnglesDeg = creaseAnglesForTimeline(model, foldStepIndex, ratio);
+  return {
+    positions: rigidTreePositions(model, creaseAnglesDeg),
+    creaseAnglesDeg,
+    ratio,
+    method: foldStepIndex <= 0 ? "flat" : "rigid-tree",
+    maxEdgeError: 0,
+    maxAngleErrorDeg: 0,
+  };
+}
+
 function scaledKeyframe(keyframe: FoldKeyframe, ratio: number): FoldKeyframe {
   return {
     ...keyframe,
@@ -56,6 +113,9 @@ export function solveFoldTimeline(
   foldStepIndex: number,
   foldAngle: number,
 ): FoldTimelineSolve {
+  if (model.rigidTimeline) {
+    return solveRigidFoldTimeline(model, foldStepIndex, foldAngle);
+  }
   const activeKeyframe = foldStepIndex - 1;
   const ratio = ratioForStep(model, foldStepIndex, foldAngle);
   if (activeKeyframe < 0 || !model.keyframes[activeKeyframe]) {

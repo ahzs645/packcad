@@ -163,6 +163,8 @@ describe("fold scene material groups", () => {
     scene.lockedIconGeometry?.dispose();
     scene.selectedTintGeometry?.dispose();
     scene.solidEdgeGeometry.dispose();
+    scene.interiorEdgeGeometry.dispose();
+    scene.occludedEdgeGeometry.dispose();
     scene.creaseEdgeGeometry.dispose();
     scene.dashedEdgeGeometry.dispose();
     scene.edgePickGeometry.dispose();

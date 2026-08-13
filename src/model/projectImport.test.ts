@@ -3,6 +3,7 @@ import {
   createMailerBoxProject,
   createPillowBoxProject,
   createSideLoadVhsProject,
+  createVhsSlipcoverProject,
 } from "@packcad/fold-solver";
 import type { OrigamiSimulationOperation } from "@packcad/format";
 import { projectFromFileText } from "./projectImport";
@@ -39,6 +40,16 @@ describe("project file import", () => {
   it("continues to load new-framework project saves", () => {
     const saved = createMailerBoxProject();
     expect(projectFromFileText(JSON.stringify(saved))).toEqual(saved);
+  });
+
+  it("restores cavity metadata missing from older VHS sample drafts", () => {
+    const saved = createVhsSlipcoverProject();
+    if (!saved.foldModel) throw new Error("VHS sample did not produce a fold model");
+    delete saved.foldModel.interiorFaceIndices;
+
+    const restored = projectFromFileText(JSON.stringify(saved));
+
+    expect(restored.foldModel?.interiorFaceIndices).toEqual([4, 6, 7, 8]);
   });
 
   it("preserves authored glue areas through source-format save and load", () => {

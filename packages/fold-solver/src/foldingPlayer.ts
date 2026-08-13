@@ -7,6 +7,7 @@ import {
   sourceStageConstraintAngles,
 } from "./foldPlaybackConstraints";
 import type { Vec3 } from "./foldSolver";
+import { solveRigidFoldTimeline } from "./foldTimelineSolver";
 import type { FoldingStep, PackagingProject } from "@packcad/format";
 
 export type FoldingPlayerState = {
@@ -337,6 +338,41 @@ function advanceSourceReplayStep(
   };
 }
 
+function advanceRigidReplay(
+  project: PackagingProject,
+  player: FoldingPlayerState,
+  deltaMs: number,
+): FoldingPlayerState {
+  const model = project.foldModel;
+  if (!model) return player;
+  const last = project.foldingSteps.length - 1;
+  let stepIndex = playableIndex(project, player.stepIndex);
+  let progress = clamp(player.progress, 0, 1)
+    + (Math.max(0, deltaMs) / LEGACY_STEP_DURATION_MS) * clamp(player.speed, 0.1, 8);
+  while (progress >= 1 && stepIndex < last) {
+    progress -= 1;
+    stepIndex += 1;
+  }
+  const step = project.foldingSteps[stepIndex];
+  const targetAngle = step ? player.targetAngles[step.id] ?? step.angle : 0;
+  const finished = progress >= 1 && stepIndex >= last;
+  if (finished) progress = 1;
+  const displayAngle = targetAngle * progress;
+  const solved = solveRigidFoldTimeline(model, stepIndex, displayAngle);
+  return {
+    ...player,
+    playing: !finished,
+    stepIndex,
+    progress,
+    positions: solved.positions,
+    displayAngle,
+    solverMaxEdgeError: 0,
+    solverMaxAngleErrorDeg: 0,
+    solverIsSolved: finished || progress >= 1,
+    finished,
+  };
+}
+
 export function advanceFoldingPlayer(
   project: PackagingProject,
   player: FoldingPlayerState,
@@ -344,6 +380,9 @@ export function advanceFoldingPlayer(
 ): FoldingPlayerState {
   if (!player.playing || project.foldingSteps.length <= 1) return pauseFoldingPlayer(player);
   if (project.foldModel) {
+    if (project.foldModel.rigidTimeline) {
+      return advanceRigidReplay(project, player, deltaMs);
+    }
     let next = {
       ...player,
       solverAccumulatorMs: Math.min(

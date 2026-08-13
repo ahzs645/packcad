@@ -3,6 +3,7 @@ import {
   createMailerBoxProject,
   createMilkCartonProject,
   createPillowBoxProject,
+  createVhsSlipcoverProject,
   solveFoldTimeline,
 } from "@packcad/fold-solver";
 import { BufferAttribute, BufferGeometry } from "three";
@@ -21,12 +22,98 @@ function disposeScene(scene: FoldSceneData): void {
   scene.lockedIconGeometry?.dispose();
   scene.selectedTintGeometry?.dispose();
   scene.solidEdgeGeometry.dispose();
+  scene.interiorEdgeGeometry.dispose();
+  scene.occludedEdgeGeometry.dispose();
   scene.creaseEdgeGeometry.dispose();
   scene.dashedEdgeGeometry.dispose();
   scene.edgePickGeometry.dispose();
 }
 
+function frontTrianglePointAndNormal(scene: FoldSceneData, faceIndex: number) {
+  const positions = scene.geometry.getAttribute("position") as BufferAttribute;
+  const indices = scene.geometry.getIndex();
+  if (!indices) throw new Error("Folded shell is not indexed");
+  const triangle = Array.from(scene.faceIndexByTriangle).indexOf(faceIndex);
+  if (triangle < 0) throw new Error(`Missing rendered face ${faceIndex}`);
+  const points = [0, 1, 2].map((corner) => {
+    const vertex = indices.getX(triangle * 3 + corner);
+    return [positions.getX(vertex), positions.getY(vertex), positions.getZ(vertex)] as const;
+  });
+  const ab = points[1].map((value, axis) => value - points[0][axis]);
+  const ac = points[2].map((value, axis) => value - points[0][axis]);
+  const normal = [
+    ab[1] * ac[2] - ab[2] * ac[1],
+    ab[2] * ac[0] - ab[0] * ac[2],
+    ab[0] * ac[1] - ab[1] * ac[0],
+  ];
+  const length = Math.hypot(...normal);
+  return {
+    point: points[0],
+    normal: normal.map((value) => value / length),
+  };
+}
+
+function signedFaceSeparation(scene: FoldSceneData, outerFace: number, innerFace: number): number {
+  const outer = frontTrianglePointAndNormal(scene, outerFace);
+  const inner = frontTrianglePointAndNormal(scene, innerFace);
+  return inner.point.reduce(
+    (sum, value, axis) => sum + (value - outer.point[axis]) * outer.normal[axis],
+    0,
+  );
+}
+
 describe("fold scene frame updates", () => {
+  it("insets completed VHS interior flaps without overriding edge visibility", () => {
+    const project = createVhsSlipcoverProject();
+    const model = project.foldModel;
+    if (!model) throw new Error("VHS fixture did not produce a fold model");
+    const scene = buildFoldScene({
+      model,
+      projection: "folded-3d",
+      foldStepIndex: model.keyframes.length,
+      foldAngle: 90,
+      thicknessMm: project.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+    });
+
+    expect(scene.occludedEdgeGeometry.getAttribute("position").count).toBe(0);
+    expect(scene.interiorEdgeGeometry.getAttribute("position").count).toBeGreaterThan(0);
+    expect(model.interiorFaceIndices).toEqual([4, 6, 7, 8]);
+    expect(scene.meta.interiorLayerFaceCount).toBe(4);
+    expect(scene.meta.lockedFaceCount).toBe(
+      model.keyframes.at(-1)?.fixedFaceIndices.length ?? 0,
+    );
+    expect(signedFaceSeparation(scene, 0, 4)).toBeLessThan(0);
+    expect(signedFaceSeparation(scene, 3, 6)).toBeLessThan(-scene.meta.visualThickness * 0.9);
+    disposeScene(scene);
+  });
+
+  it("keeps the VHS glue seam and closure ears inside before the tuck stage", () => {
+    const project = createVhsSlipcoverProject();
+    const model = project.foldModel;
+    if (!model) throw new Error("VHS fixture did not produce a fold model");
+    const scene = buildFoldScene({
+      model,
+      projection: "folded-3d",
+      foldStepIndex: 4,
+      foldAngle: 90,
+      thicknessMm: project.thicknessMm,
+      panelColorMode: "artwork",
+      edgeColorMode: "mountain-valley",
+    });
+
+    expect(scene.meta.interiorLayerFaceCount).toBe(3);
+    expect(scene.occludedEdgeGeometry.getAttribute("position").count).toBe(0);
+
+    for (const earFace of [7, 8]) {
+      expect(signedFaceSeparation(scene, 5, earFace)).toBeLessThan(
+        -scene.meta.visualThickness * 0.9,
+      );
+    }
+    disposeScene(scene);
+  });
+
   it("renders the source-discretised pillow graph without re-smoothing flat curves", () => {
     const project = createPillowBoxProject();
     const model = project.foldModel;

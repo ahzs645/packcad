@@ -80,6 +80,10 @@ export type FoldModel = {
   transforms: FoldTransform[];
   /** Thickness modifier (value in design units) + offset direction + rotation. */
   thickness: { value: number; direction: string; units: string; rotationDegrees: number } | null;
+  /** Use the exact spanning-tree hinge playback for authored acyclic patterns. */
+  rigidTimeline?: boolean;
+  /** Faces whose completed pose lies behind the package's exterior shell. */
+  interiorFaceIndices?: number[];
 };
 
 function vector3Or(value: unknown, fallback: [number, number, number]): [number, number, number] {
