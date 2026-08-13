@@ -151,20 +151,41 @@ export function SourceSidebar({
             {samples.map((sample) => (
               <article className="sample-card" key={sample.id}>
                 <div className="sample-card-heading">
-                  <span className="sample-card-icon"><Icon name="package" size={18} /></span>
-                  <span>
+                  <span className="sample-card-icon"><Icon name="package" size={15} /></span>
+                  <span className="sample-card-copy">
                     <strong>{sample.name}</strong>
                     <small>{sample.source}</small>
                   </span>
+                  <span className="sample-card-actions">
+                    <span className="sample-card-info">
+                      <button
+                        type="button"
+                        className="sample-info-button"
+                        aria-label={`About ${sample.name}`}
+                        aria-describedby={`sample-info-${sample.id}`}
+                      >
+                        <Icon name="info" size={14} />
+                      </button>
+                      <span
+                        className="sample-info-tooltip"
+                        id={`sample-info-${sample.id}`}
+                        role="tooltip"
+                      >
+                        <strong>{sample.name}</strong>
+                        <span>{sample.description}</span>
+                        <small>{sample.details}</small>
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="sample-load-button"
+                      aria-label={`Load ${sample.name}`}
+                      onClick={() => onLoadSample(sample.id)}
+                    >
+                      Load
+                    </button>
+                  </span>
                 </div>
-                <p>{sample.description}</p>
-                <small className="sample-card-details">{sample.details}</small>
-                <button
-                  type="button"
-                  onClick={() => onLoadSample(sample.id)}
-                >
-                  Load sample
-                </button>
               </article>
             ))}
           </div>
