@@ -326,7 +326,7 @@ input[type="number"] {
   position: absolute;
   z-index: 30;
   top: calc(100% + 6px);
-  right: 0;
+  right: -42px;
   display: grid;
   width: 185px;
   gap: 5px;
@@ -347,7 +347,7 @@ input[type="number"] {
 .sample-info-tooltip::before {
   position: absolute;
   top: -5px;
-  right: 7px;
+  right: 50px;
   width: 9px;
   height: 9px;
   background: #18181b;
