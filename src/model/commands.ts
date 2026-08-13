@@ -45,6 +45,7 @@ import {
   setOperationTargetAngle,
   toggleModifier,
   toggleOperation,
+  toggleOperationGlueFace,
   toggleOperationLockedFace,
 } from "./operationPipeline";
 
@@ -175,6 +176,12 @@ export function createCommandRegistry(): CommandRegistry<PackagingProject> {
     "Toggle locked face",
     ["operationId", "faceId"],
     (project, params) => toggleOperationLockedFace(project, params.operationId, params.faceId),
+  ));
+  add(command<{ operationId: string; faceId: string }>(
+    "pipeline.toggleGlueFace",
+    "Toggle glue area",
+    ["operationId", "faceId"],
+    (project, params) => toggleOperationGlueFace(project, params.operationId, params.faceId),
   ));
   add(command<{ operationId: string; edgeId: string; angleDegrees: number }>(
     "pipeline.setCreaseAngle",

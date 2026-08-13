@@ -191,6 +191,10 @@ describe("PackCAD editor integration", () => {
       operationId: activeOperation.id,
       faceId,
     }).ok).toBe(true);
+    expect(editor.execute("pipeline.toggleGlueFace", {
+      operationId: activeOperation.id,
+      faceId,
+    }).ok).toBe(true);
 
     const model = editor.content.foldModel;
     const edgeIndex = model?.edgesAssignment.findIndex(
@@ -212,6 +216,11 @@ describe("PackCAD editor integration", () => {
     ) as OrigamiSimulationOperation | undefined;
     expect(authored?.enforcePriorConstraints).toBe(false);
     expect(authored?.fixedFaceIDs).toContain(faceId);
+    expect(authored?.glueFaceIDs).toContain(faceId);
+    expect(
+      editor.content.foldModel?.keyframes.find((keyframe) => keyframe.id === activeOperation.id)
+        ?.glueFaceIndices,
+    ).toContain(editor.content.foldModel?.facesIDs.indexOf(faceId));
     expect(
       authored?.foldingEdgeGroups.find((group) => group.edgeIDs.includes(edgeId))
         ?.targetAngleDegrees,

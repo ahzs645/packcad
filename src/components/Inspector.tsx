@@ -31,6 +31,7 @@ interface InspectorProps {
   ) => void;
   onSetEnforcePrior: (operationId: string, value: boolean) => void;
   onToggleLockedFace: (operationId: string, faceId: string) => void;
+  onToggleGlueFace: (operationId: string, faceId: string) => void;
   onSetCreaseAngle: (
     operationId: string,
     edgeId: string,
@@ -94,6 +95,7 @@ export function Inspector({
   onSetTargetAngle,
   onSetEnforcePrior,
   onToggleLockedFace,
+  onToggleGlueFace,
   onSetCreaseAngle,
   onSetCamera,
   onSetHelpers,
@@ -131,7 +133,14 @@ export function Inspector({
   const selectedFaceLocked = Boolean(
     selectedFaceId && activeOperation?.fixedFaceIDs.includes(selectedFaceId),
   );
+  const selectedFaceGlued = Boolean(
+    selectedFaceId && activeOperation?.glueFaceIDs?.includes(selectedFaceId),
+  );
   const lockedFaces = activeOperation?.fixedFaceIDs.map((faceId) => ({
+    faceId,
+    faceIndex: project.foldModel?.facesIDs.indexOf(faceId) ?? -1,
+  })) ?? [];
+  const glueFaces = activeOperation?.glueFaceIDs?.map((faceId) => ({
     faceId,
     faceIndex: project.foldModel?.facesIDs.indexOf(faceId) ?? -1,
   })) ?? [];
@@ -363,6 +372,45 @@ export function Inspector({
                   : "Lock selected panel"}
               </button>
             ) : null}
+          </div>
+          <div className="keyframe-constraints glue-panels">
+            <span className="constraints-label">Glue Areas</span>
+            {glueFaces.length === 0 ? (
+              <p className="keyframe-hint subtle">
+                No adhesive zones. Select a panel to mark it for glue or tape.
+              </p>
+            ) : (
+              <ul className="locked-panel-list glue-panel-list">
+                {glueFaces.map(({ faceIndex, faceId }) => (
+                  <li key={faceId}>
+                    <span>
+                      {faceIndex >= 0 ? `Panel #${faceIndex + 1}` : faceId}
+                    </span>
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => onToggleGlueFace(activeOperation.id, faceId)}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {selectedFaceId ? (
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => onToggleGlueFace(activeOperation.id, selectedFaceId)}
+              >
+                {selectedFaceGlued
+                  ? "Remove glue from selected panel"
+                  : "Mark selected panel as glue area"}
+              </button>
+            ) : null}
+            <p className="keyframe-hint subtle">
+              Glue areas are saved with the assembly stage and exported on the dieline.
+            </p>
           </div>
         </div>
       ) : null}

@@ -1008,6 +1008,11 @@ export default function App() {
               operationId,
               faceId,
             })}
+          onToggleGlueFace={(operationId, faceId) =>
+            pauseAndExecute("pipeline.toggleGlueFace", {
+              operationId,
+              faceId,
+            })}
           onSetCreaseAngle={(operationId, edgeId, angleDegrees) =>
             pauseAndExecute("pipeline.setCreaseAngle", {
               operationId,

@@ -43,6 +43,8 @@ export type FoldKeyframe = {
    * model's global `fixedFaceIndex`.
    */
   fixedFaceIndices: number[];
+  /** Faces marked as adhesive zones for this assembly keyframe. */
+  glueFaceIndices?: number[];
   /** Extra individual vertices held rigid this keyframe (`fixedVertexIDs`). */
   fixedVertexIndices: number[];
   /** Match PackCAD's per-operation prior-target constraint policy. */
@@ -263,12 +265,18 @@ export function buildFoldModel(design: PackCadDesign): FoldModel | null {
       const vi = vertexIndexByUuid.get(uuid);
       if (vi !== undefined) fixedVertexIndices.push(vi);
     }
+    const glueFaceIndices: number[] = [];
+    for (const uuid of op.glueFaceIDs ?? []) {
+      const fi = faceIndexByUuid.get(uuid);
+      if (fi !== undefined) glueFaceIndices.push(fi);
+    }
     return {
       id: op.id,
       label: op.name || "Folding Keyframe",
       creaseAnglesDeg,
       creaseEdgeGroup,
       fixedFaceIndices,
+      glueFaceIndices,
       fixedVertexIndices,
       enforcePriorConstraints: op.enforcePriorConstraints ?? false,
     };

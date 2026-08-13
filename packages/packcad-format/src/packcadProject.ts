@@ -111,6 +111,8 @@ export type OrigamiSimulationOperation = PackCadOperationBase & {
   foldingEdgeGroups: FoldingEdgeGroup[];
   fixedVertexIDs: string[];
   fixedFaceIDs: string[];
+  /** Panels that receive adhesive when this assembly keyframe is completed. */
+  glueFaceIDs?: string[];
   enforcePriorConstraints: boolean;
 };
 
@@ -295,6 +297,7 @@ function parseOperation(value: unknown): PackCadOperation | null {
           })),
         fixedVertexIDs: asArray(value.fixedVertexIDs).map((item) => asString(item)),
         fixedFaceIDs: asArray(value.fixedFaceIDs).map((item) => asString(item)),
+        glueFaceIDs: asArray(value.glueFaceIDs).map((item) => asString(item)),
         enforcePriorConstraints: asBoolean(value.enforcePriorConstraints),
       };
     default:

@@ -11,6 +11,7 @@ describe("PackCAD sample library", () => {
       "milk-carton",
       "curved-box",
       "pillow-box",
+      "side-load-vhs",
     ]);
     const project = createPackCadSampleProject("live-mailer-box");
     expect(project.design?.name).toBe("MailerBox");
@@ -26,6 +27,7 @@ describe("PackCAD sample library", () => {
     ["milk-carton", "milk_carton", 53, 25],
     ["curved-box", "curvedbox", 202, 80],
     ["pillow-box", "pillowbox", 176, 67],
+    ["side-load-vhs", "Side-load VHS Slipcover", 28, 11],
   ] as const)(
     "loads %s with its source geometry",
     (sampleId, designName, vertices, faces) => {

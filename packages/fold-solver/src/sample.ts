@@ -2,6 +2,7 @@ import sourceFixture from "./fixtures/mailerBox.packcad.json";
 import milkCartonFixture from "./fixtures/milkCarton.packcad.json";
 import curvedBoxFixture from "./fixtures/curvedBox.packcad.json";
 import pillowBoxFixture from "./fixtures/pillowBox.packcad.json";
+import sideLoadVhsFixture from "./fixtures/sideLoadVhs.packcad.json";
 import {
   packCadProjectToProject,
   type PackCadProjectFile,
@@ -26,4 +27,8 @@ export function createCurvedBoxProject(): PackagingProject {
 
 export function createPillowBoxProject(): PackagingProject {
   return packCadProjectToProject(pillowBoxFixture as PackCadProjectFile);
+}
+
+export function createSideLoadVhsProject(): PackagingProject {
+  return packCadProjectToProject(sideLoadVhsFixture as PackCadProjectFile);
 }

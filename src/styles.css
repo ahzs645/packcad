@@ -1409,6 +1409,18 @@ footer a {
   font-size: 12px;
 }
 
+.glue-panel-list li {
+  border-color: rgb(217 119 6 / 38%);
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgb(245 158 11 / 16%) 0,
+      rgb(245 158 11 / 16%) 5px,
+      rgb(245 158 11 / 6%) 5px,
+      rgb(245 158 11 / 6%) 10px
+    );
+}
+
 .link-button {
   padding: 0;
   color: #2f6fed;

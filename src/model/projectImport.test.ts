@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   createMailerBoxProject,
   createPillowBoxProject,
+  createSideLoadVhsProject,
 } from "@packcad/fold-solver";
+import type { OrigamiSimulationOperation } from "@packcad/format";
 import { projectFromFileText } from "./projectImport";
 
 describe("project file import", () => {
@@ -37,6 +39,23 @@ describe("project file import", () => {
   it("continues to load new-framework project saves", () => {
     const saved = createMailerBoxProject();
     expect(projectFromFileText(JSON.stringify(saved))).toEqual(saved);
+  });
+
+  it("preserves authored glue areas through source-format save and load", () => {
+    const source = createSideLoadVhsProject();
+    const project = projectFromFileText(JSON.stringify({
+      app_id: "PACKCAD_MOCKUP",
+      app_version: "0.1.0",
+      design: source.design,
+    }));
+    const seam = project.design?.operations.find(
+      (operation) => operation.name === "Close and glue side seam",
+    ) as OrigamiSimulationOperation | undefined;
+    expect(seam?.glueFaceIDs).toHaveLength(2);
+    expect(
+      project.foldModel?.keyframes.find((keyframe) => keyframe.id === seam?.id)
+        ?.glueFaceIndices,
+    ).toHaveLength(2);
   });
 
   it("rejects arbitrary JSON before it can crash playback", () => {

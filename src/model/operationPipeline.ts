@@ -121,6 +121,7 @@ export function addOrigamiKeyframe(project: PackagingProject): PackagingProject 
       ...group,
       targetAngleDegrees: 0,
     })),
+    glueFaceIDs: [],
   };
   const design = cloneDesign(project.design);
   design.operations = [...design.operations, next];
@@ -185,6 +186,28 @@ export function toggleOperationLockedFace(
         fixedFaceIDs: has
           ? origami.fixedFaceIDs.filter((id) => id !== faceId)
           : [...origami.fixedFaceIDs, faceId],
+      };
+    }),
+  );
+}
+
+/** Add or remove a panel from a keyframe's printable adhesive zones. */
+export function toggleOperationGlueFace(
+  project: PackagingProject,
+  operationId: string,
+  faceId: string,
+): PackagingProject {
+  return withOperations(project, (operations) =>
+    operations.map((op) => {
+      if (op.id !== operationId || op.type !== "OPERATION_ORIGAMI_SIMULATION") return op;
+      const origami = op as OrigamiSimulationOperation;
+      const glueFaceIDs = origami.glueFaceIDs ?? [];
+      const has = glueFaceIDs.includes(faceId);
+      return {
+        ...origami,
+        glueFaceIDs: has
+          ? glueFaceIDs.filter((id) => id !== faceId)
+          : [...glueFaceIDs, faceId],
       };
     }),
   );

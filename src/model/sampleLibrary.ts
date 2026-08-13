@@ -3,6 +3,7 @@ import {
   createMailerBoxProject,
   createMilkCartonProject,
   createPillowBoxProject,
+  createSideLoadVhsProject,
 } from "@packcad/fold-solver";
 import type { PackagingProject } from "@packcad/format";
 
@@ -43,6 +44,13 @@ export const packCadSampleLibrary: readonly PackCadSampleDefinition[] = [
     description: "The source non-rigid pillow simulation, including its staged open-shell branch and bowed end.",
     details: "67 panels · 2 non-rigid keyframes · 88 curved edges",
   },
+  {
+    id: "side-load-vhs",
+    name: "Side-load VHS Slipcover",
+    source: "TaperCraft public template vector trace",
+    description: "A side-loading VHS sleeve with the traced public cut contour, printable glue zones, and a solved four-stage folding animation.",
+    details: "11 panels · 2 glue flaps · 4 solved keyframes",
+  },
 ] as const;
 
 export function createPackCadSampleProject(sampleId: string): PackagingProject {
@@ -55,6 +63,8 @@ export function createPackCadSampleProject(sampleId: string): PackagingProject {
       return createCurvedBoxProject();
     case "pillow-box":
       return createPillowBoxProject();
+    case "side-load-vhs":
+      return createSideLoadVhsProject();
     default:
       throw new Error(`Unknown PackCAD sample: ${sampleId}`);
   }
