@@ -10,6 +10,9 @@ type Point = [number, number];
 type FaceDefinition = {
   name: string;
   loop: Point[];
+  /** Loop positions that coincide visually with another face but are separated
+   *  by a cut, so they must not share one moving FOLD vertex. */
+  splitVertexIndices?: number[];
 };
 
 type FoldingStageDefinition = {
@@ -60,17 +63,22 @@ function buildPatternProject(definition: PatternDefinition): PackagingProject {
   const vertices: Point[] = [];
   const vertexIndex = new Map<string, number>();
   const faceLoops: number[][] = [];
-  const vertex = (point: Point): number => {
+  const vertex = (point: Point, split = false): number => {
     const key = pointKey(point);
-    const found = vertexIndex.get(key);
-    if (found !== undefined) return found;
+    if (!split) {
+      const found = vertexIndex.get(key);
+      if (found !== undefined) return found;
+    }
     const index = vertices.length;
-    vertexIndex.set(key, index);
+    if (!split) vertexIndex.set(key, index);
     vertices.push(point);
     return index;
   };
 
-  for (const face of definition.faces) faceLoops.push(face.loop.map(vertex));
+  for (const face of definition.faces) {
+    const splitVertices = new Set(face.splitVertexIndices ?? []);
+    faceLoops.push(face.loop.map((point, index) => vertex(point, splitVertices.has(index))));
+  }
 
   const edges: Array<[number, number]> = [];
   const edgeFaces: number[][] = [];
@@ -426,15 +434,21 @@ function cardDeckPoint(x: number, y: number): Point {
   return [x / cardDeckBoxScale, (cardDeckBoxSourceHeight - y) / cardDeckBoxScale];
 }
 
-function cardDeckFace(name: string, sourceLoop: Point[]): FaceDefinition {
+function cardDeckFace(
+  name: string,
+  sourceLoop: Point[],
+  splitVertexIndices?: number[],
+): FaceDefinition {
   return {
     name,
     loop: sourceLoop.map(([x, y]) => cardDeckPoint(x, y)),
+    splitVertexIndices,
   };
 }
 
 function cardDeckBoxDefinition(): PatternDefinition {
-  const face = (name: string, sourceLoop: Point[]) => cardDeckFace(name, sourceLoop);
+  const face = (name: string, sourceLoop: Point[], splitVertexIndices?: number[]) =>
+    cardDeckFace(name, sourceLoop, splitVertexIndices);
   const line = (a: Point, b: Point): [Point, Point] => [
     cardDeckPoint(...a),
     cardDeckPoint(...b),
@@ -470,18 +484,21 @@ function cardDeckBoxDefinition(): PatternDefinition {
       [76.94, 0.25], [212.99, 0.25], [224.5, 3.75], [232, 11],
       [236.8, 22.93], [215.55, 43.91],
     ]),
+    // These flap tips touch adjacent closures at one printed point, but the
+    // line between them is a cut rather than a hinge. Preserve the exact 2D
+    // coordinates while giving each moving flap its own FOLD vertex.
     face("Left top dust flap", [
       [0.26, 96.84], [0.26, 84.75], [3.09, 81.91], [10.18, 50.82],
       [53.27, 50.82], [53.27, 96.84],
-    ]),
+    ], [4]),
     face("Right top dust flap", [
       [237.8, 96.84], [237.8, 50.82], [280.32, 50.82], [288.26, 82.2],
       [291.09, 85.03], [291.09, 96.84],
-    ]),
+    ], [1]),
     face("Left bottom dust flap", [
       [0.26, 353.45], [53.27, 353.45], [53.27, 366.49],
       [48.45, 369.33], [41.36, 406.68], [0.26, 406.68],
-    ]),
+    ], [2]),
     face("Front bottom flap", [
       [59.08, 353.45], [233.77, 353.45], [237.8, 366.49],
       [233.78, 406.68], [57.3, 406.68], [53.27, 366.49],
@@ -489,7 +506,7 @@ function cardDeckBoxDefinition(): PatternDefinition {
     face("Right bottom dust flap", [
       [242.37, 353.45], [286.78, 353.45], [291.09, 406.68],
       [248.58, 406.68], [241.5, 369.33], [237.8, 366.49],
-    ]),
+    ], [5]),
     face("Back bottom flap", [
       [296.12, 353.45], [470.81, 353.45], [475.64, 406.68], [291.1, 406.68],
     ]),
