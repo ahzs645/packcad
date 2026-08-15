@@ -92,6 +92,41 @@ function foldAngle(n1: V3, n2: V3, eHat: V3): number {
 }
 
 type Tri = [number, number, number];
+const triangulationCache = new WeakMap<FoldModel, WeakMap<object, Tri[][]>>();
+const manifoldHingeCache = new WeakMap<
+  FoldModel,
+  WeakMap<object, ReturnType<typeof manifoldHinges>>
+>();
+
+function stageTriangulation(model: FoldModel, restPositions: V3[]): Tri[][] {
+  let byPositions = triangulationCache.get(model);
+  if (!byPositions) {
+    byPositions = new WeakMap<object, Tri[][]>();
+    triangulationCache.set(model, byPositions);
+  }
+  const cached = byPositions.get(restPositions);
+  if (cached) return cached;
+  const triangles = triangulateFoldModelFaces(model, restPositions);
+  byPositions.set(restPositions, triangles);
+  return triangles;
+}
+
+function stageManifoldHinges(
+  model: FoldModel,
+  restPositions: V3[],
+): ReturnType<typeof manifoldHinges> {
+  let byPositions = manifoldHingeCache.get(model);
+  if (!byPositions) {
+    byPositions = new WeakMap<object, ReturnType<typeof manifoldHinges>>();
+    manifoldHingeCache.set(model, byPositions);
+  }
+  const cached = byPositions.get(restPositions);
+  if (cached) return cached;
+  const hinges = manifoldHinges(model, restPositions);
+  byPositions.set(restPositions, hinges);
+  return hinges;
+}
+
 function triEdgeDir(tri: Tri, a: number, b: number): number {
   for (let i = 0; i < 3; i += 1) {
     const u = tri[i];
@@ -166,34 +201,42 @@ function stageEnergyPlateau(history: number[], relativeThreshold: number): boole
   return change / (first + 1e-10) <= relativeThreshold;
 }
 
-/** Dense Cholesky solve of SPD A x = b (A row-major n×n). null if not PD. */
-function choleskySolve(A: Float64Array, b: Float64Array, n: number): Float64Array | null {
-  const L = new Float64Array(n * n);
+/** Dense Cholesky solve of SPD A x = b using packed lower triangles. */
+function choleskySolve(
+  A: Float64Array,
+  b: Float64Array,
+  n: number,
+  rowOffsets: Int32Array,
+  L: Float64Array,
+  y: Float64Array,
+  x: Float64Array,
+): boolean {
   for (let i = 0; i < n; i += 1) {
+    const rowI = rowOffsets[i];
     for (let j = 0; j <= i; j += 1) {
-      let s = A[i * n + j];
-      for (let k = 0; k < j; k += 1) s -= L[i * n + k] * L[j * n + k];
+      const rowJ = rowOffsets[j];
+      let s = A[rowI + j];
+      for (let k = 0; k < j; k += 1) s -= L[rowI + k] * L[rowJ + k];
       if (i === j) {
-        if (s <= 0) return null;
-        L[i * n + i] = Math.sqrt(s);
+        if (s <= 0) return false;
+        L[rowI + i] = Math.sqrt(s);
       } else {
-        L[i * n + j] = s / L[j * n + j];
+        L[rowI + j] = s / L[rowJ + j];
       }
     }
   }
-  const y = new Float64Array(n);
   for (let i = 0; i < n; i += 1) {
+    const rowI = rowOffsets[i];
     let s = b[i];
-    for (let k = 0; k < i; k += 1) s -= L[i * n + k] * y[k];
-    y[i] = s / L[i * n + i];
+    for (let k = 0; k < i; k += 1) s -= L[rowI + k] * y[k];
+    y[i] = s / L[rowI + i];
   }
-  const x = new Float64Array(n);
   for (let i = n - 1; i >= 0; i -= 1) {
     let s = y[i];
-    for (let k = i + 1; k < n; k += 1) s -= L[k * n + i] * x[k];
-    x[i] = s / L[i * n + i];
+    for (let k = i + 1; k < n; k += 1) s -= L[rowOffsets[k] + i] * x[k];
+    x[i] = s / L[rowOffsets[i] + i];
   }
-  return x;
+  return true;
 }
 
 /** +1 if loop traverses a->b, -1 if b->a, 0 otherwise. */
@@ -242,9 +285,8 @@ export function foldNewton(
   const strainTol = options.strainTol ?? INCREMENTAL_SOLVE_TOL_DISTANCE;
   const N = model.verticesCoords.length;
   const flatPositions = model.verticesCoords.map((v) => [v[0], v[1], 0] as V3);
-  const restPositions = (options.restPositions ?? options.seed ?? flatPositions).map(
-    (p) => [p[0], p[1], p[2]] as V3,
-  );
+  const restPositions = options.restPositions
+    ?? (options.seed ?? flatPositions).map((p) => [p[0], p[1], p[2]] as V3);
   const restDist = (a: number, b: number) => len(sub(restPositions[a], restPositions[b]));
 
   // Source ConstraintManager only instantiates constraints that touch at least
@@ -267,7 +309,7 @@ export function foldNewton(
   const scale = options.scale ?? boundingExtent(restPositions);
 
   // ---- triangulate every face (ear clipping on the flat polygon) -----------
-  const faceTris: Tri[][] = triangulateFoldModelFaces(model, restPositions);
+  const faceTris = stageTriangulation(model, restPositions);
 
   // ---- isometry bars: real edges + triangulation diagonals -----------------
   const edges: EdgeC[] = [];
@@ -424,7 +466,7 @@ export function foldNewton(
   // Edges whose four vertices are all pinned cannot move, and the reference
   // skips building a constraint for them, so they keep their incoming sign.
   const branchSigns: FoldBranchSigns = { ...(options.branchSigns ?? {}) };
-  const latchHinges = manifoldHinges(model, restPositions).filter(
+  const latchHinges = stageManifoldHinges(model, restPositions).filter(
     (h) => !pinned[h.a] || !pinned[h.b] || !pinned[h.w1] || !pinned[h.w2],
   );
   // The latch is set by CreaseDihedralConstraint.updateCurrentValue, so it reads
@@ -600,8 +642,13 @@ export function foldNewton(
   };
 
   // ---- solver loop ----------------------------------------------------------
-  const K = new Float64Array(F * F);
+  const matrixRowOffsets = new Int32Array(F);
+  for (let row = 0; row < F; row += 1) matrixRowOffsets[row] = (row * (row + 1)) / 2;
+  const K = new Float64Array((F * (F + 1)) / 2);
   const rhs = new Float64Array(F);
+  const choleskyL = new Float64Array(K.length);
+  const choleskyY = new Float64Array(F);
+  const delta = new Float64Array(F);
   const energyHistory = new Float64Array(ENERGY_HISTORY_MAX_LENGTH);
   let historyIndex = 0;
   let historyCount = 0;
@@ -651,9 +698,11 @@ export function foldNewton(
       for (let p = 0; p < entries.length; p += 1) {
         const ep = entries[p];
         rhs[ep.col] += c.G * ep.d * err;
-        for (let q = 0; q < entries.length; q += 1) {
+        for (let q = 0; q <= p; q += 1) {
           const eq = entries[q];
-          K[ep.col * F + eq.col] += c.G * ep.d * eq.d;
+          const row = Math.max(ep.col, eq.col);
+          const column = Math.min(ep.col, eq.col);
+          K[matrixRowOffsets[row] + column] += c.G * ep.d * eq.d;
         }
       }
     }
@@ -665,9 +714,11 @@ export function foldNewton(
       for (let p = 0; p < entries.length; p += 1) {
         const ep = entries[p];
         rhs[ep.col] += c.G * ep.d * err;
-        for (let q = 0; q < entries.length; q += 1) {
+        for (let q = 0; q <= p; q += 1) {
           const eq = entries[q];
-          K[ep.col * F + eq.col] += c.G * ep.d * eq.d;
+          const row = Math.max(ep.col, eq.col);
+          const column = Math.min(ep.col, eq.col);
+          K[matrixRowOffsets[row] + column] += c.G * ep.d * eq.d;
         }
       }
     }
@@ -675,12 +726,19 @@ export function foldNewton(
     for (let v = 0; v < N; v += 1) {
       for (let ax = 0; ax < 3; ax += 1) {
         const cc = col[v * 3 + ax];
-        if (cc >= 0) K[cc * F + cc] += mass[v];
+        if (cc >= 0) K[matrixRowOffsets[cc] + cc] += mass[v];
       }
     }
 
-    const delta = choleskySolve(K, rhs, F);
-    if (!delta) break;
+    if (!choleskySolve(
+      K,
+      rhs,
+      F,
+      matrixRowOffsets,
+      choleskyL,
+      choleskyY,
+      delta,
+    )) break;
 
     // store previous (free) positions for the line search
     for (let v = 0; v < N; v += 1) {
