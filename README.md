@@ -14,6 +14,8 @@ exports the folded model or flat dieline.
 - `src/model/` — Atelier command registrations and the PackCAD-to-Atelier drawing adapter.
 - `src/render/` — app-owned folded mesh construction and fold-line presentation rules.
 - `src/components/` — focused toolbar, inspector, operation, material, and viewport panes.
+- `src/viewer/` — the embeddable viewer (`viewer.html`): one project folded and played, with
+  no editor, driven from its address and window messages. See [Embedding the viewer](docs/embed.md).
 
 Atelier packages are workspace-external `file:` dependencies. `three` is pinned to `0.181.2`,
 and Vite deduplicates it so the viewport and application always share one runtime instance.
