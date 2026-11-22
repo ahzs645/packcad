@@ -5,7 +5,6 @@ import {
   Box3,
   BufferGeometry,
   CanvasTexture,
-  ClampToEdgeWrapping,
   DirectionalLight,
   DoubleSide,
   Float32BufferAttribute,
@@ -45,6 +44,7 @@ import {
 } from "@packcad/format";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { artworkImageSources } from "../model/artworkPlacement";
+import { applyArtworkPlacement } from "../render/artworkTexture";
 import {
   isSelectableCrease,
   sourceEdgeIndexFromPickSegment,
@@ -180,25 +180,6 @@ function configureArtworkTexture(texture: Texture): Texture {
   texture.minFilter = LinearFilter;
   texture.needsUpdate = true;
   return texture;
-}
-
-/**
- * Faithful port of packager/FoldScene.tsx's ArtworkPlacement texture transform.
- * The projection-dependent mirror is deliberately supplied by the caller.
- */
-function applyArtworkPlacement(
-  texture: Texture,
-  artwork: PackagingProject["artwork"],
-  mirror: boolean,
-): void {
-  const scale = Math.max(0.0001, artwork.scale);
-  texture.center.set(0.5, 0.5);
-  texture.rotation = (artwork.rotation * Math.PI) / 180;
-  texture.repeat.set((mirror ? -1 : 1) / scale, 1 / scale);
-  texture.offset.set(-artwork.x / scale, -artwork.y / scale);
-  texture.wrapS = ClampToEdgeWrapping;
-  texture.wrapT = ClampToEdgeWrapping;
-  texture.needsUpdate = true;
 }
 
 function createFatEdges(
@@ -552,10 +533,9 @@ export function ViewportPane({
     const source = frontArtworkTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    // The fold-to-scene axis remap changes handedness. Compensate in 3D so the
-    // exterior print remains readable when the camera moves behind the folded
-    // package; the flat dieline keeps the source image's native orientation.
-    applyArtworkPlacement(texture, project.artwork, viewMode !== "2d");
+    // The placement helper preserves source atlases while retaining the
+    // projection-dependent mirror used by existing sample documents.
+    applyArtworkPlacement(texture, project.artwork, viewMode);
     return texture;
   }, [frontArtworkTexture, project.artwork, viewMode]);
   const placedBackArtworkTexture = useMemo(() => {
@@ -563,11 +543,7 @@ export function ViewportPane({
       ?? frontArtworkTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    applyArtworkPlacement(
-      texture,
-      project.artwork,
-      viewMode !== "2d" && Boolean(backArtworkTexture || frontArtworkTexture),
-    );
+    applyArtworkPlacement(texture, project.artwork, viewMode);
     return texture;
   }, [backArtworkTexture, frontArtworkTexture, project.artwork, viewMode]);
   useEffect(

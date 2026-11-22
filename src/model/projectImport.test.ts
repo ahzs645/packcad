@@ -7,6 +7,7 @@ import {
 } from "@packcad/fold-solver";
 import type { OrigamiSimulationOperation } from "@packcad/format";
 import { projectFromFileText } from "./projectImport";
+import { renameOperation } from "./operationPipeline";
 
 describe("project file import", () => {
   it("loads an original PACKCAD_MOCKUP source through the format adapter", () => {
@@ -40,6 +41,80 @@ describe("project file import", () => {
   it("continues to load new-framework project saves", () => {
     const saved = createMailerBoxProject();
     expect(projectFromFileText(JSON.stringify(saved))).toEqual(saved);
+  });
+
+  it("preserves source-atlas artwork through source and editable save/open", () => {
+    const design = structuredClone(createSideLoadVhsProject().design);
+    if (!design) throw new Error("VHS fixture did not produce a design");
+    design.modifiers.OPERATION_ARTWORK = {
+      id: "OPERATION_ARTWORK",
+      type: "OPERATION_ARTWORK",
+      name: "Registered source artwork",
+      enabled: true,
+      uvConvention: "source-atlas",
+      frontArtwork: "data:image/png;base64,front",
+      backArtwork: "data:image/png;base64,back",
+    };
+    const sourceFile = { app_id: "PACKCAD_MOCKUP", app_version: "0.1.0", design };
+    const imported = projectFromFileText(JSON.stringify(sourceFile));
+    expect(imported.artwork.uvConvention).toBe("source-atlas");
+    expect(imported.design?.modifiers.OPERATION_ARTWORK?.uvConvention).toBe("source-atlas");
+
+    const editableReopened = projectFromFileText(JSON.stringify(imported));
+    expect(editableReopened.artwork).toEqual(imported.artwork);
+    const sourceReopened = projectFromFileText(JSON.stringify({
+      ...sourceFile,
+      design: imported.design,
+    }));
+    expect(sourceReopened.artwork.uvConvention).toBe("source-atlas");
+    expect(sourceReopened.design?.modifiers.OPERATION_ARTWORK).toEqual(design.modifiers.OPERATION_ARTWORK);
+  });
+
+  it("keeps unmarked source documents on the legacy artwork convention", () => {
+    const source = createMailerBoxProject();
+    const imported = projectFromFileText(JSON.stringify({
+      app_id: "PACKCAD_MOCKUP",
+      app_version: "1.3.31",
+      design: source.design,
+    }));
+    expect(source.artwork.uvConvention).toBeUndefined();
+    expect(imported.artwork.uvConvention).toBeUndefined();
+  });
+
+  it("retains opt-in surface layers through source import, native open, and operation edits", () => {
+    const source = createMailerBoxProject();
+    const design = structuredClone(source.design);
+    const model = source.foldModel;
+    const thickness = design?.modifiers.OPERATION_THICKNESS;
+    if (!design || !model || !thickness) throw new Error("Mailer fixture lacks source thickness");
+    const firstFace = model.facesIDs[0];
+    const secondFace = model.facesIDs[1];
+    thickness.faceSurfaceLayers = { [firstFace]: -1.05, [secondFace]: 2.05 };
+    const imported = projectFromFileText(JSON.stringify({
+      app_id: "PACKCAD_MOCKUP", app_version: "0.1.0", design,
+    }));
+    expect(imported.design?.modifiers.OPERATION_THICKNESS?.faceSurfaceLayers).toEqual(
+      thickness.faceSurfaceLayers,
+    );
+    expect(imported.foldModel?.faceSurfaceLayers?.slice(0, 3)).toEqual([-1.05, 2.05, null]);
+    imported.foldModel!.rigidTimeline = true;
+    const reopened = projectFromFileText(JSON.stringify(imported));
+    expect(reopened.foldModel?.faceSurfaceLayers).toEqual(imported.foldModel?.faceSurfaceLayers);
+    const renamed = renameOperation(reopened, reopened.foldModel!.keyframes[0].id, "Layered fold");
+    expect(renamed.foldModel?.faceSurfaceLayers).toEqual(imported.foldModel?.faceSurfaceLayers);
+    expect(renamed.foldModel?.rigidTimeline).toBe(true);
+    expect(renamed.design?.modifiers.OPERATION_THICKNESS?.faceSurfaceLayers).toEqual(
+      thickness.faceSurfaceLayers,
+    );
+  });
+
+  it("does not opt unmarked projects into surface layering", () => {
+    const source = createMailerBoxProject();
+    const imported = projectFromFileText(JSON.stringify({
+      app_id: "PACKCAD_MOCKUP", app_version: "0.1.0", design: source.design,
+    }));
+    expect(Object.hasOwn(imported.foldModel!, "faceSurfaceLayers")).toBe(false);
+    expect(Object.hasOwn(imported.design!.modifiers.OPERATION_THICKNESS!, "faceSurfaceLayers")).toBe(false);
   });
 
   it("restores cavity metadata missing from older VHS sample drafts", () => {

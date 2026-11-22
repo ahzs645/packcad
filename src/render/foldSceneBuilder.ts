@@ -165,20 +165,30 @@ function interiorFaceActivationStep(model: FoldModel, faceIndex: number): number
 
 function activeInteriorFaces(model: FoldModel, foldStepIndex: number): Set<number> {
   return new Set(
-    (model.interiorFaceIndices ?? []).filter((faceIndex) => {
+    [...interiorOutlineFaceIndices(model)].filter((faceIndex) => {
       const activationStep = interiorFaceActivationStep(model, faceIndex);
       return activationStep !== null && foldStepIndex >= activationStep;
     }),
   );
 }
 
+function interiorOutlineFaceIndices(model: FoldModel): Set<number> {
+  const faces = new Set(model.interiorFaceIndices ?? []);
+  model.faceSurfaceLayers?.forEach((layer, faceIndex) => {
+    if (typeof layer === "number" && Number.isFinite(layer) && layer !== 0) faces.add(faceIndex);
+  });
+  return faces;
+}
+
 /**
- * Interior flaps overlap an exterior wall at their solved 90-degree position.
- * Move their complete board slab one stock thickness into the folded shell so
+ * Interior flaps overlap an exterior wall at their solved position.
+ * Move their complete board slab into the folded shell so
  * the exterior panel wins the physical layer order instead of z-fighting with
  * a coincident mid-surface. The displacement direction is resolved separately
  * from the rendered winding by choosing the face-normal branch that points
- * toward the folded model's center/cavity.
+ * toward the folded model's center/cavity. Explicit signed faceSurfaceLayers
+ * instead follow the printed normal, including reversed 180-degree foldbacks.
+ * These are render offsets; the solved positions and rigid hinges never move.
  */
 function interiorFaceLayerAmounts(
   model: FoldModel,
@@ -194,7 +204,11 @@ function interiorFaceLayerAmounts(
     foldStepIndex,
     foldRatioForStep(model, foldStepIndex, foldAngle),
   );
-  for (const faceIndex of model.interiorFaceIndices ?? []) {
+  const layeredFaces = interiorOutlineFaceIndices(model);
+  model.faceSurfaceLayers?.forEach((layer, faceIndex) => {
+    if (typeof layer === "number" && Number.isFinite(layer)) layeredFaces.add(faceIndex);
+  });
+  for (const faceIndex of layeredFaces) {
     let amount = 0;
     for (const edgeIndex of model.facesEdges[faceIndex] ?? []) {
       if ((model.edgeFaces[edgeIndex]?.length ?? 0) < 2) continue;
@@ -207,7 +221,11 @@ function interiorFaceLayerAmounts(
     // A mathematically exact one-thickness overlap leaves the two sheet
     // surfaces coplanar. Give nested flaps half a stock of clearance so their
     // cut outlines cannot leak through the enclosing wall at oblique angles.
-    amounts[faceIndex] = visualThickness * 1.5 * amount;
+    const authoredLayer = model.faceSurfaceLayers?.[faceIndex];
+    const layer = typeof authoredLayer === "number" && Number.isFinite(authoredLayer)
+      ? authoredLayer
+      : 1.5;
+    amounts[faceIndex] = visualThickness * layer * amount;
   }
   return amounts;
 }
@@ -228,7 +246,11 @@ function interiorFaceLayerDisplacements(
   );
   return model.facesVertices.map((loop, faceIndex) => {
     const amount = layerAmounts[faceIndex] ?? 0;
-    if (amount <= 0 || loop.length === 0) return [0, 0, 0];
+    if (amount === 0 || loop.length === 0) return [0, 0, 0];
+    const authoredLayer = model.faceSurfaceLayers?.[faceIndex];
+    if (typeof authoredLayer === "number" && Number.isFinite(authoredLayer)) {
+      return v3scale(faceNormals[faceIndex], amount);
+    }
     const faceCenter = loop.reduce<V3>(
       (sum, vertexIndex) => {
         const point = scenePositions[vertexIndex];
@@ -253,6 +275,10 @@ function cavitySurfaceNormalSign(
   faceNormals: V3[],
   faceIndex: number,
 ): number {
+  const authoredLayer = model.faceSurfaceLayers?.[faceIndex];
+  if (typeof authoredLayer === "number" && Number.isFinite(authoredLayer) && authoredLayer !== 0) {
+    return Math.sign(authoredLayer);
+  }
   const modelCenter = scenePositions.reduce<V3>(
     (sum, point) => [
       sum[0] + point[0] / scenePositions.length,
@@ -688,7 +714,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // closure-flap outlines back into the exterior/ghost line pass. Authored
   // interior faces always own cavity-only outlines in 3D.
   const interiorOutlineFaces = projection === "folded-3d"
-    ? new Set(model.interiorFaceIndices ?? [])
+    ? interiorOutlineFaceIndices(model)
     : new Set<number>();
 
   const positions: number[] = [];

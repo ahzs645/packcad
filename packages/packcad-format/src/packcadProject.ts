@@ -16,6 +16,7 @@
 import {
   createProject,
   materials,
+  type ArtworkPlacement,
   type DielineSource,
   type FoldingStep,
   type MaterialId,
@@ -135,6 +136,9 @@ export type ThicknessModifier = {
   thickness: number;
   thicknessOffsetDirection: string;
   materialRotationDegrees: number;
+  /** Optional display-only slab shifts, keyed by face UUID. Values are signed
+   * stock-thickness multiples along the face's printed/front normal. */
+  faceSurfaceLayers?: Record<string, number>;
 };
 
 export type ArtworkModifier = {
@@ -142,6 +146,8 @@ export type ArtworkModifier = {
   type: "OPERATION_ARTWORK";
   name: string;
   enabled: boolean;
+  /** Opt in to direct registration of the print against the source FOLD UVs. */
+  uvConvention?: ArtworkPlacement["uvConvention"];
   frontArtwork?: string;
   frontArtworkFilename?: string;
   backArtwork?: string;
@@ -331,11 +337,20 @@ function parseModifiers(value: unknown): PackCadModifiers {
           "THICKNESS_OFFSET_DIRECTION_BOTH",
         ),
         materialRotationDegrees: asNumber(raw.materialRotationDegrees),
+        ...(isRecord(raw.faceSurfaceLayers) ? {
+          faceSurfaceLayers: Object.fromEntries(
+            Object.entries(raw.faceSurfaceLayers).filter(
+              (entry): entry is [string, number] =>
+                typeof entry[1] === "number" && Number.isFinite(entry[1]),
+            ),
+          ),
+        } : {}),
       };
     } else if (key === "OPERATION_ARTWORK") {
       modifiers.OPERATION_ARTWORK = {
         ...common,
         type: "OPERATION_ARTWORK",
+        ...(raw.uvConvention === "source-atlas" ? { uvConvention: "source-atlas" } : {}),
         frontArtwork: asString(raw.frontArtwork) || undefined,
         frontArtworkFilename: asString(raw.frontArtworkFilename) || undefined,
         backArtwork: asString(raw.backArtwork) || undefined,
@@ -482,6 +497,10 @@ export function deriveFromDesign(design: PackCadDesign): Partial<PackagingProjec
 
 export function packCadProjectToProject(file: PackCadProjectFile): PackagingProject {
   const project = { ...createProject(), ...deriveFromDesign(file.design) };
+  const uvConvention = file.design.modifiers.OPERATION_ARTWORK?.uvConvention;
+  if (uvConvention === "source-atlas") {
+    project.artwork = { ...project.artwork, uvConvention };
+  }
   const lastStep = project.foldingSteps[project.foldingSteps.length - 1];
   return lastStep ? { ...project, activeStepId: lastStep.id } : project;
 }

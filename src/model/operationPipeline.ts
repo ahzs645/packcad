@@ -25,6 +25,12 @@ function cloneDesign(design: PackCadDesign): PackCadDesign {
 /** Apply an edited design back onto a project, re-deriving fold/material state. */
 export function applyDesign(project: PackagingProject, design: PackCadDesign): PackagingProject {
   const derived = deriveFromDesign(design);
+  // An authored rigid-panel project keeps its explicit playback choice when
+  // an operation edit rebuilds the model. Unmarked projects retain the default.
+  const rigidTimeline = project.foldModel?.rigidTimeline;
+  if (derived.foldModel && rigidTimeline !== undefined) {
+    derived.foldModel = { ...derived.foldModel, rigidTimeline };
+  }
   const activeStepId = derived.foldingSteps?.some((step) => step.id === project.activeStepId)
     ? project.activeStepId
     : (derived.activeStepId ?? derived.foldingSteps?.[0]?.id ?? project.activeStepId);

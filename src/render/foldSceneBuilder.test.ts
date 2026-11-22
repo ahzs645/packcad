@@ -8,6 +8,7 @@ import {
 } from "@packcad/fold-solver";
 import { BufferAttribute, BufferGeometry } from "three";
 import { describe, expect, it, vi } from "vitest";
+import type { FoldModel } from "@packcad/format";
 import {
   buildFoldScene,
   facePointWeights,
@@ -62,7 +63,94 @@ function signedFaceSeparation(scene: FoldSceneData, outerFace: number, innerFace
   );
 }
 
+function foldbackModel(): FoldModel {
+  return {
+    verticesCoords: [[0, 0], [10, 0], [10, 10], [0, 10], [20, 0], [20, 10]],
+    coordinateUnit: "mm",
+    verticesUv: [],
+    verticesIDs: ["v0", "v1", "v2", "v3", "v4", "v5"],
+    facesIDs: ["body", "foldback"],
+    edgesVertices: [[0, 1], [1, 2], [2, 3], [3, 0], [1, 4], [4, 5], [5, 2]],
+    edgesAssignment: ["B", "V", "B", "B", "B", "B", "B"],
+    facesVertices: [[0, 1, 2, 3], [1, 4, 5, 2]],
+    facesEdges: [[0, 1, 2, 3], [4, 5, 6, 1]],
+    edgeFaces: [[0], [0, 1], [0], [0], [1], [1], [1]],
+    fixedFaceIndex: 0,
+    keyframes: [{
+      id: "fold", label: "Fold back", creaseAnglesDeg: { 1: 180 },
+      creaseEdgeGroup: { 1: 0 }, fixedFaceIndices: [0], fixedVertexIndices: [],
+      enforcePriorConstraints: false,
+    }],
+    transforms: [],
+    thickness: { value: 0.1, direction: "THICKNESS_OFFSET_DIRECTION_BACK", units: "mm", rotationDegrees: 0 },
+    rigidTimeline: true,
+  };
+}
+
 describe("fold scene frame updates", () => {
+  it("keeps a 180-degree foldback's entire rendered slab behind the exterior sheet", () => {
+    const model = foldbackModel();
+    const structuralVertices = structuredClone(model.verticesCoords);
+    const input = {
+      model, projection: "folded-3d" as const, foldStepIndex: 1, foldAngle: 180, thicknessMm: 0.1,
+      panelColorMode: "artwork" as const, edgeColorMode: "mountain-valley" as const,
+    };
+    const baseline = buildFoldScene(input);
+    model.faceSurfaceLayers = [null, 2.05];
+    const layered = buildFoldScene(input);
+    const exterior = frontTrianglePointAndNormal(layered, 0);
+    const positions = layered.geometry.getAttribute("position") as BufferAttribute;
+    const distances = layered.positionLayout.meshRecipes.flatMap((recipe, index) => {
+      if (recipe.kind !== "face" || recipe.faceIndex !== 1) return [];
+      return [[positions.getX(index), positions.getY(index), positions.getZ(index)].reduce(
+        (sum, value, axis) => sum + (value - exterior.point[axis]) * exterior.normal[axis], 0,
+      )];
+    });
+    expect(Math.min(...distances)).toBeCloseTo(-2.05 * layered.meta.visualThickness, 6);
+    expect(Math.max(...distances)).toBeCloseTo(-1.05 * layered.meta.visualThickness, 6);
+    expect(Math.max(...distances)).toBeLessThan(-layered.meta.visualThickness);
+    expect(signedFaceSeparation(baseline, 0, 1)).toBeCloseTo(0, 6);
+    expect(layered.interiorEdgeGeometry.getAttribute("position").count).toBeGreaterThan(0);
+    expect(model.verticesCoords).toEqual(structuralVertices);
+    expect(layered.timelineSolve.positions).toEqual(baseline.timelineSolve.positions);
+    disposeScene(baseline);
+    disposeScene(layered);
+  });
+
+  it.each([-1.05, 2.05])("updates signed surface layer %s continuously without moving the flat print", (layer) => {
+    const model = foldbackModel();
+    const common = {
+      model, thicknessMm: 0.1, panelColorMode: "artwork" as const, edgeColorMode: "mountain-valley" as const,
+    };
+    const plainFlat = buildFoldScene({ ...common, projection: "flat-2d", foldStepIndex: 0, foldAngle: 0 });
+    model.faceSurfaceLayers = [null, layer];
+    const input = { ...common, projection: "folded-3d" as const, foldStepIndex: 1, foldAngle: 0 };
+    const scene = buildFoldScene(input);
+    const layeredFlat = buildFoldScene({ ...input, projection: "flat-2d", foldStepIndex: 0 });
+    expect(layeredFlat.geometry.getAttribute("position").array).toEqual(
+      plainFlat.geometry.getAttribute("position").array,
+    );
+    expect(layeredFlat.solidEdgeGeometry.getAttribute("position").array).toEqual(
+      plainFlat.solidEdgeGeometry.getAttribute("position").array,
+    );
+    for (const foldAngle of [0, 45, 90, 135, 180]) {
+      updateFoldScenePositions(scene, { foldStepIndex: 1, foldAngle });
+      const fresh = buildFoldScene({ ...input, foldAngle });
+      for (const key of ["geometry", "solidEdgeGeometry", "interiorEdgeGeometry", "dashedEdgeGeometry"] as const) {
+        const actual = scene[key].getAttribute("position").array;
+        const expected = fresh[key].getAttribute("position").array;
+        expect(actual.length).toBe(expected.length);
+        const maximum = Array.from(actual).reduce((result, value, index) =>
+          Math.max(result, Math.abs(value - expected[index])), 0);
+        expect(maximum).toBeLessThan(1e-6);
+      }
+      disposeScene(fresh);
+    }
+    disposeScene(plainFlat);
+    disposeScene(layeredFlat);
+    disposeScene(scene);
+  });
+
   it("insets completed VHS interior flaps without overriding edge visibility", () => {
     const project = createVhsSlipcoverProject();
     const model = project.foldModel;
