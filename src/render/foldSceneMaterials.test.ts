@@ -139,6 +139,13 @@ describe("fold scene material groups", () => {
     expect(materials.artwork?.slice(0, 2).every((material) =>
       material.transparent && material.depthWrite === false && material.alphaTest > 0
     )).toBe(true);
+    // Print wins against its own board by a constant depth bias only. A
+    // slope-scaled bias grows without limit toward grazing angles, and near a
+    // corner it pulled glued inside tabs' print through the wall in front of them.
+    expect(materials.artwork?.every((material) =>
+      !material.polygonOffset
+      || (material.polygonOffsetFactor === 0 && material.polygonOffsetUnits < 0)
+    )).toBe(true);
     expect(materials.base.every((material) => material.color.getHex() !== 0x000000)).toBe(true);
     for (const group of scene.geometry.groups) {
       if (group.materialIndex === undefined) {

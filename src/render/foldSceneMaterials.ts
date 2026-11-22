@@ -154,8 +154,12 @@ export function createFoldSceneMaterials({
     transparent: true,
     alphaTest: 0.01,
     depthWrite: false,
+    // The print shares its board's triangles exactly, so a constant bias is
+    // enough to win against it. No slope factor: that bias grows toward grazing
+    // angles until it exceeds the board-thickness gap to a glued inside tab,
+    // whose print then shows through the wall at corners.
     polygonOffset: true,
-    polygonOffsetFactor: -1,
+    polygonOffsetFactor: 0,
     polygonOffsetUnits: -1,
     side: FrontSide,
   } as const;
