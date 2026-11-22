@@ -1,4 +1,80 @@
-/* The viewer page: the editor's viewport filling the frame, with a folding transport under it. */
+/* The viewer page: the editor's viewport filling the frame, with a folding transport under it.
+
+   Its colours are tokens, so a host can show it in its own light or dark theme (`theme=dark` in
+   the address, or a packcad:theme message). The viewport's ground is the --viewer-ground the
+   viewer sets from the host's background, and every container behind the canvas wears it too, so
+   nothing flashes the editor's white while a project opens or a layout changes. */
+
+:root {
+  --viewer-ink: #18181b;
+  --viewer-ink-muted: #3f3f46;
+  --viewer-chrome: #ffffff;
+  --viewer-chrome-line: #e4e4e7;
+  --viewer-hover: #f4f4f5;
+  --viewer-label: rgb(255 255 255 / 86%);
+  --viewer-inset-ground: #fbfbfb;
+  --viewer-inset-line: rgb(24 24 27 / 18%);
+  --viewer-inset-line-hover: rgb(24 24 27 / 42%);
+  --viewer-toolbar-hover: rgb(255 255 255 / 76%);
+}
+
+:root[data-theme="dark"] {
+  --viewer-ink: #ede9e2;
+  --viewer-ink-muted: #b8b1a6;
+  --viewer-chrome: #211e1a;
+  --viewer-chrome-line: #3a342e;
+  --viewer-hover: #2b2723;
+  --viewer-label: rgb(33 30 26 / 86%);
+  --viewer-inset-ground: #26221e;
+  --viewer-inset-line: rgb(237 233 226 / 16%);
+  --viewer-inset-line-hover: rgb(237 233 226 / 38%);
+  --viewer-toolbar-hover: rgb(255 255 255 / 10%);
+  color: var(--viewer-ink);
+  background: var(--viewer-ground, #1c1a17);
+}
+
+.viewer .viewport,
+.viewer .viewport-pane,
+.viewer .split-view {
+  background: var(--viewer-ground, #f2f2f3);
+}
+
+.viewer .viewport-toolbar .icon-button,
+.viewer .viewport-toolbar .icon-button.selected {
+  color: var(--viewer-ink);
+}
+
+@media (hover: hover) {
+  .viewer .viewport-toolbar .icon-button:hover {
+    background: var(--viewer-toolbar-hover);
+  }
+}
+
+.viewer .inset {
+  outline-color: var(--viewer-inset-line);
+  background: var(--viewer-inset-ground);
+  color: var(--viewer-ink);
+}
+
+@media (hover: hover) {
+  .viewer .inset:hover {
+    outline-color: var(--viewer-inset-line-hover);
+  }
+}
+
+.viewer .inset-label,
+.viewer .pane-label {
+  background: var(--viewer-label);
+  color: var(--viewer-ink);
+}
+
+.viewer .corner-mode {
+  color: var(--viewer-ink-muted);
+}
+
+:root[data-theme="dark"] .viewer .inset {
+  box-shadow: 0 6px 18px rgb(0 0 0 / 40%);
+}
 
 .viewer {
   display: grid;
@@ -25,8 +101,9 @@
   gap: 4px;
   min-width: 0;
   padding: 6px 10px;
-  border-top: 1px solid #e4e4e7;
-  background: #fff;
+  border-top: 1px solid var(--viewer-chrome-line);
+  background: var(--viewer-chrome);
+  color: var(--viewer-ink);
   font-size: 13px;
 }
 
@@ -41,21 +118,21 @@
 
 @media (hover: hover) {
   .viewer-transport .icon-button:hover:not(:disabled) {
-    background: #f4f4f5;
+    background: var(--viewer-hover);
   }
 }
 
 .viewer-steps {
   flex: 0 1 160px;
   min-width: 60px;
-  accent-color: #18181b;
+  accent-color: var(--viewer-ink);
 }
 
 .viewer-step-label {
   min-width: 0;
   margin-left: 6px;
   overflow: hidden;
-  color: #3f3f46;
+  color: var(--viewer-ink-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -65,7 +142,8 @@
   place-items: center;
   height: 100%;
   padding: 16px;
-  color: #52525b;
+  background: var(--viewer-ground, transparent);
+  color: var(--viewer-ink-muted);
   font-size: 14px;
   text-align: center;
 }

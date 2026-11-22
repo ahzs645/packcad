@@ -29,7 +29,7 @@ import {
   dot3,
   signedTargetRadiansFromDeveloped,
 } from "./foldBranch";
-import { foldFaces, nonRigidMessage, type SolveStatus, type Vec3 } from "./foldSolver";
+import { foldFacePositions, nonRigidMessage, type SolveStatus, type Vec3 } from "./foldSolver";
 import type { FoldBranchSigns } from "./foldBranchState";
 import { boundingExtent, foldNewton } from "./foldNewtonSolver";
 import {
@@ -145,15 +145,14 @@ function scaleAngles(angles: Record<number, number>, factor: number): Record<num
 }
 
 /**
- * Welded seed from the rigid spanning-tree development (foldFaces): each vertex
+ * Welded seed from the rigid spanning-tree development (foldFacePositions): each vertex
  * takes its position from the BFS-earliest face containing it. This is the
  * reference's developmentTransform seeding -- it folds every tree crease to its
  * exact (signed) target so the seed is in the data's branch; cyclic loops are
  * left with small gaps for Gauss-Newton to close.
  */
 function developSeed(model: FoldModel, anglesDeg: Record<number, number>): Vec3[] {
-  const faces = foldFaces(model, anglesDeg);
-  const byIndex = new Map(faces.map((f) => [f.faceIndex, f]));
+  const facePositions = foldFacePositions(model, anglesDeg);
   const positions: Vec3[] = model.verticesCoords.map((v) => [v[0], v[1], 0]);
   const assigned = new Array<boolean>(positions.length).fill(false);
   const order: number[] = [];
@@ -171,11 +170,11 @@ function developSeed(model: FoldModel, anglesDeg: Record<number, number>): Vec3[
     }
   }
   for (const fi of order) {
-    const face = byIndex.get(fi);
+    const face = facePositions[fi];
     if (!face) continue;
     model.facesVertices[fi].forEach((vi, k) => {
       if (assigned[vi]) return;
-      positions[vi] = [face.positions[k][0], face.positions[k][1], face.positions[k][2]];
+      positions[vi] = [face[k][0], face[k][1], face[k][2]];
       assigned[vi] = true;
     });
   }

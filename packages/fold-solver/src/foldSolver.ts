@@ -95,11 +95,13 @@ export type FoldedFace = {
 };
 
 /**
- * Fold the model. `creaseAnglesDeg` maps FOLD edge index -> fold angle in
- * degrees (0 = flat). Returns folded geometry as independent (unwelded) faces,
- * each carrying its own positions/UVs/triangles for direct mesh assembly.
+ * Fold the model's faces rigidly from the fixed face and return each face's
+ * vertex positions, in loop order. This is the part of `foldFaces` every solver
+ * seed and the playback timeline need; it does not triangulate, which keeps
+ * the constrained-Delaunay mesher (exact arithmetic, the dominant per-frame
+ * cost during playback) out of anything that only wants positions.
  */
-export function foldFaces(model: FoldModel, creaseAnglesDeg: Record<number, number>): FoldedFace[] {
+export function foldFacePositions(model: FoldModel, creaseAnglesDeg: Record<number, number>): Vec3[][] {
   const flat3 = (vi: number): Vec3 => {
     const v = model.verticesCoords[vi];
     return [v[0], v[1], 0];
@@ -140,7 +142,20 @@ export function foldFaces(model: FoldModel, creaseAnglesDeg: Record<number, numb
 
   return model.facesVertices.map((loop, faceIndex) => {
     const hinges = hingesByFace[faceIndex] ?? [];
-    const positions = loop.map((vi) => applyHinges(flat3(vi), hinges));
+    return loop.map((vi) => applyHinges(flat3(vi), hinges));
+  });
+}
+
+/**
+ * Fold the model. `creaseAnglesDeg` maps FOLD edge index -> fold angle in
+ * degrees (0 = flat). Returns folded geometry as independent (unwelded) faces,
+ * each carrying its own positions/UVs/triangles for direct mesh assembly.
+ * Callers that only need positions should use `foldFacePositions`.
+ */
+export function foldFaces(model: FoldModel, creaseAnglesDeg: Record<number, number>): FoldedFace[] {
+  const facePositions = foldFacePositions(model, creaseAnglesDeg);
+  return model.facesVertices.map((loop, faceIndex) => {
+    const positions = facePositions[faceIndex];
     const uv = loop.map((vi): [number, number] => {
       const t = model.verticesUv[vi];
       return t ? [t[0], t[1]] : [0, 0];
@@ -254,17 +269,15 @@ function bfsFaceOrder(model: FoldModel): number[] {
 // Welded seed for a fold state: each vertex takes the rigid position from the
 // spanning-tree-earliest face that contains it.
 function seedPositions(model: FoldModel, order: number[], creaseAnglesDeg: Record<number, number>): Vec3[] {
-  const faces = foldFaces(model, creaseAnglesDeg);
-  const faceByIndex = new Map<number, FoldedFace>();
-  for (const face of faces) faceByIndex.set(face.faceIndex, face);
+  const facePositions = foldFacePositions(model, creaseAnglesDeg);
   const positions: Vec3[] = model.verticesCoords.map((v) => [v[0], v[1], 0]);
   const assigned = new Array<boolean>(model.verticesCoords.length).fill(false);
   for (const faceIndex of order) {
-    const face = faceByIndex.get(faceIndex);
+    const face = facePositions[faceIndex];
     if (!face) continue;
     model.facesVertices[faceIndex].forEach((vi, k) => {
       if (assigned[vi]) return;
-      positions[vi] = [face.positions[k][0], face.positions[k][1], face.positions[k][2]];
+      positions[vi] = [face[k][0], face[k][1], face[k][2]];
       assigned[vi] = true;
     });
   }

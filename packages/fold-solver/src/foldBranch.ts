@@ -1,5 +1,5 @@
 import type { FoldModel } from "@packcad/format";
-import { foldFaces, type Vec3 } from "./foldSolver";
+import { foldFacePositions, type Vec3 } from "./foldSolver";
 
 const EPS = 1e-6;
 
@@ -28,15 +28,14 @@ export function buildDevelopedFacePositions(
   creaseAnglesDeg: Record<number, number>,
 ): DevelopedFacePositions {
   const result: DevelopedFacePositions = new Map();
-  for (const face of foldFaces(model, creaseAnglesDeg)) {
+  foldFacePositions(model, creaseAnglesDeg).forEach((positions, faceIndex) => {
     const vertices = new Map<number, Vec3>();
-    const loop = model.facesVertices[face.faceIndex];
-    loop.forEach((vertexIndex, localIndex) => {
-      const p = face.positions[localIndex];
+    model.facesVertices[faceIndex].forEach((vertexIndex, localIndex) => {
+      const p = positions[localIndex];
       vertices.set(vertexIndex, [p[0], p[1], p[2]]);
     });
-    result.set(face.faceIndex, vertices);
-  }
+    result.set(faceIndex, vertices);
+  });
   return result;
 }
 

@@ -10,7 +10,7 @@
 import type { PackagingProject } from "@packcad/format";
 import type { Object3D } from "three";
 import type { Viewport } from "@atelier/viewport";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "../components/Icon";
 import { ViewportWorkspace } from "../components/ViewportWorkspace";
 import { useFoldingPlayback } from "../model/foldingPlayback";
@@ -23,11 +23,13 @@ import {
 } from "../model/uiPreferences";
 import { useFoldSettlement } from "../render/useFoldSettlement";
 import {
+  DEFAULT_BACKGROUND,
   layoutFor,
   parseViewerCommand,
   resolveStepId,
   type ViewerEvent,
   type ViewerOptions,
+  type ViewerTheme,
 } from "./embedProtocol";
 
 /** How long a looping display holds the finished model before folding it again. */
@@ -54,6 +56,15 @@ export function ViewerApp({ options }: { options: ViewerOptions }) {
   const [error, setError] = useState<string | null>(null);
   const [layout, setLayout] = useState<ViewLayout>(options.layout);
   const [background, setBackground] = useState(options.background);
+  const [theme, setTheme] = useState<ViewerTheme>(options.theme);
+
+  // The page's own colours (viewer.css) follow the theme; the viewport's ground
+  // is the host's colour when it gave one, else the theme's.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+  const ground = background ?? DEFAULT_BACKGROUND[theme];
 
   const load = useCallback((url: string, step: string | number, autoplay: boolean): void => {
     setError(null);
@@ -79,20 +90,22 @@ export function ViewerApp({ options }: { options: ViewerOptions }) {
       if (command?.type === "packcad:load") load(command.url, command.step ?? "final", command.autoplay ?? false);
       if (command?.type === "packcad:layout") setLayout(layoutFor(command.layout));
       if (command?.type === "packcad:background") setBackground(command.color);
+      if (command?.type === "packcad:theme") setTheme(command.theme);
     };
     window.addEventListener("message", listen);
     return () => window.removeEventListener("message", listen);
   }, [load]);
 
-  if (error) return <div className="viewer-message" role="alert">{error}</div>;
-  if (!loaded) return <div className="viewer-message" role="status">Opening the project…</div>;
+  const groundStyle = { "--viewer-ground": ground } as CSSProperties;
+  if (error) return <div className="viewer-message" role="alert" style={groundStyle}>{error}</div>;
+  if (!loaded) return <div className="viewer-message" role="status" style={groundStyle}>Opening the project…</div>;
   return (
     <LoadedViewer
       key={loaded.project.design?.id ?? loaded.project.dieline?.name ?? "project"}
       loaded={loaded}
       layout={layout}
       onLayout={setLayout}
-      background={background}
+      background={ground}
       controls={options.controls}
       loop={options.loop}
     />
@@ -110,7 +123,7 @@ function LoadedViewer({
   loaded: Loaded;
   layout: ViewLayout;
   onLayout: (layout: ViewLayout) => void;
-  background: string | null;
+  background: string;
   controls: boolean;
   loop: boolean;
 }) {
@@ -133,7 +146,7 @@ function LoadedViewer({
     viewLayout: layout,
     groundPlane: helpers,
     origin: helpers,
-    ...(background ? { backgroundColor: background } : {}),
+    backgroundColor: background,
   }), [background, helpers, layout, project]);
 
   const steps = project.foldingSteps;
@@ -196,7 +209,11 @@ function LoadedViewer({
   const step = steps[stepIndex];
 
   return (
-    <div className="viewer" data-controls={controls || undefined}>
+    <div
+      className="viewer"
+      data-controls={controls || undefined}
+      style={{ "--viewer-ground": background } as CSSProperties}
+    >
       <ViewportWorkspace
         project={playback.displayedProject}
         foldPlayback={player}

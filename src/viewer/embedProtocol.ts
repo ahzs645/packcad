@@ -22,7 +22,20 @@ export type ViewerOptions = {
   background: string | null;
   /** Loop the fold animation (folds, holds, unfolds, holds, folds again) for a display stage. */
   loop: boolean;
+  /** The viewer's own chrome (toolbar, inset, labels, transport), to match the host page. */
+  theme: ViewerTheme;
 };
+
+export type ViewerTheme = "light" | "dark";
+
+/** The viewport's ground when the host names a theme but no colour. */
+export const DEFAULT_BACKGROUND: Record<ViewerTheme, string> = {
+  light: "#f2f2f3",
+  dark: "#1c1a17",
+};
+
+const theme = (value: unknown): ViewerTheme | null =>
+  value === "light" || value === "dark" ? value : null;
 
 const LAYOUTS: Record<string, ViewLayout> = {
   "3d": "single-3d",
@@ -50,6 +63,7 @@ export function readViewerOptions(search: string): ViewerOptions {
     controls: flag(params.get("controls"), true),
     background: colour(params.get("background")),
     loop: flag(params.get("loop"), false),
+    theme: theme(params.get("theme")) ?? "light",
   };
 }
 
@@ -78,7 +92,8 @@ export type ViewerCommand =
   | { type: "packcad:load"; url: string; step?: string | number; autoplay?: boolean }
   | { type: "packcad:layout"; layout: "3d" | "2d" | "split" | "split-vertical" }
   | { type: "packcad:fit" }
-  | { type: "packcad:background"; color: string };
+  | { type: "packcad:background"; color: string }
+  | { type: "packcad:theme"; theme: ViewerTheme };
 
 /** What the viewer tells the host. */
 export type ViewerEvent =
@@ -117,6 +132,10 @@ export function parseViewerCommand(data: unknown): ViewerCommand | null {
     case "packcad:background": {
       const color = colour(typeof data.color === "string" ? data.color : null);
       return color ? { type: "packcad:background", color } : null;
+    }
+    case "packcad:theme": {
+      const name = theme(data.theme);
+      return name ? { type: "packcad:theme", theme: name } : null;
     }
     default:
       return null;

@@ -7,7 +7,7 @@ import {
 } from "./foldPlaybackConstraints";
 import {
   creaseAnglesForTimeline,
-  foldFaces,
+  foldFacePositions,
   type Vec3,
 } from "./foldSolver";
 
@@ -42,8 +42,9 @@ function ratioForStep(model: FoldModel, foldStepIndex: number, foldAngle: number
 }
 
 function rigidTreePositions(model: FoldModel, creaseAnglesDeg: Record<number, number>): Vec3[] {
-  const foldedFaces = foldFaces(model, creaseAnglesDeg);
-  const faceByIndex = new Map(foldedFaces.map((face) => [face.faceIndex, face]));
+  // Positions only: playback calls this every frame, and triangulating every
+  // face each time dominated the frame (foldFacePositions).
+  const facePositions = foldFacePositions(model, creaseAnglesDeg);
   const positions = flatPositions(model);
   const assigned = new Array<boolean>(positions.length).fill(false);
   const visited = new Array<boolean>(model.facesVertices.length).fill(false);
@@ -65,11 +66,11 @@ function rigidTreePositions(model: FoldModel, creaseAnglesDeg: Record<number, nu
     if (!visited[faceIndex]) faceOrder.push(faceIndex);
   }
   for (const faceIndex of faceOrder) {
-    const face = faceByIndex.get(faceIndex);
+    const face = facePositions[faceIndex];
     if (!face) continue;
     model.facesVertices[faceIndex].forEach((vertexIndex, localIndex) => {
       if (assigned[vertexIndex]) return;
-      const point = face.positions[localIndex];
+      const point = face[localIndex];
       positions[vertexIndex] = [point[0], point[1], point[2]];
       assigned[vertexIndex] = true;
     });

@@ -28,6 +28,7 @@ unchanged.
 | `layout`     | `3d`, `2d`, `split`, `split-vertical`                                 | `3d`    |
 | `controls`   | `0` hides the transport, for a host that draws its own                | `1`     |
 | `background` | Viewport background as a hex colour (`f4f4f5` or `#f4f4f5`)           | theme   |
+| `theme`      | `light` or `dark`: the toolbar, inset, labels and transport           | `light` |
 
 ```html
 <iframe src="packcad/viewer.html?project=../models/bus.packcad.pdf&autoplay=1"></iframe>
@@ -43,8 +44,10 @@ frame.contentWindow.postMessage({ type: 'packcad:seek', step: 3 }, '*')        /
 frame.contentWindow.postMessage({ type: 'packcad:load', url: 'other.packcad.json', step: 'setup', autoplay: true }, '*')
 ```
 
-Also `packcad:pause`, `packcad:fit`, `packcad:layout` (`{ layout: '2d' }`) and
-`packcad:background` (`{ color: '#000000' }`).
+Also `packcad:pause`, `packcad:fit`, `packcad:layout` (`{ layout: '2d' }`),
+`packcad:background` (`{ color: '#000000' }`) and `packcad:theme` (`{ theme: 'dark' }`). A host
+that follows a light/dark toggle sends `packcad:theme` and `packcad:background` together, so the
+frame changes without reloading.
 
 The viewer posts to its parent:
 
