@@ -69,3 +69,13 @@
   font-size: 14px;
   text-align: center;
 }
+
+/* In a narrow frame (a phone, or a small embed) the 2D inset would cover half the model. */
+@media (max-width: 560px) {
+  .viewer .inset {
+    bottom: 8px;
+    left: 8px;
+    width: 112px;
+    height: 84px;
+  }
+}
