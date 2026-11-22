@@ -625,3 +625,55 @@ describe("fold scene frame updates", () => {
     disposeScene(scene);
   });
 });
+
+describe("folded handedness", () => {
+  // The sheet seen from its print side, as the flat view shows it, must be the
+  // sheet seen from outside once folded. A reflection in the fold -> scene remap
+  // folded every package into its mirror image: lettering read backwards, and
+  // un-mirroring the artwork to compensate moved print onto the opposite panel.
+  it("folds the sheet as printed, not its mirror image", () => {
+    const model = hingedPanelModel(false, false);
+    const common = {
+      model, thicknessMm: 0.1, panelColorMode: "artwork" as const,
+      edgeColorMode: "mountain-valley" as const,
+    };
+    const edge = (a: number, b: number) =>
+      model.edgesVertices.findIndex(([u, v]) => u === a && v === b);
+    const along = edge(0, 1);
+    const up = edge(3, 0);
+    expect(along).toBeGreaterThanOrEqual(0);
+    expect(up).toBeGreaterThanOrEqual(0);
+
+    // Corners A (0,0), B (10,0) and D (0,10) of the fixed body panel, and the
+    // turn A -> B -> D as seen looking at its print.
+    const turn = (scene: FoldSceneData, toward: readonly number[]): number => {
+      const ab = scene.positionsByEdge.get(along);
+      const da = scene.positionsByEdge.get(up);
+      if (!ab || !da) throw new Error("Missing body edge positions");
+      const a = [ab[0], ab[1], ab[2]];
+      const b = [ab[3], ab[4], ab[5]];
+      const d = [da[0], da[1], da[2]];
+      const u = b.map((value, axis) => value - a[axis]);
+      const v = d.map((value, axis) => value - a[axis]);
+      const cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+      ];
+      return Math.sign(cross.reduce((sum, value, axis) => sum + value * toward[axis], 0));
+    };
+
+    // The flat view looks down from +Y at the sheet as printed.
+    const flat = buildFoldScene({ ...common, projection: "flat-2d", foldStepIndex: 0, foldAngle: 0 });
+    const printed = turn(flat, [0, 1, 0]);
+    expect(printed).not.toBe(0);
+    disposeScene(flat);
+
+    for (const foldAngle of [0, 90]) {
+      const folded = buildFoldScene({ ...common, projection: "folded-3d", foldStepIndex: 1, foldAngle });
+      // Seen from outside: along the outward normal of the printed (front) side.
+      expect(turn(folded, frontTrianglePointAndNormal(folded, 0).normal)).toBe(printed);
+      disposeScene(folded);
+    }
+  });
+});

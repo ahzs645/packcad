@@ -533,19 +533,18 @@ export function ViewportPane({
     const source = frontArtworkTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    // The placement helper preserves source atlases while retaining the
-    // projection-dependent mirror used by existing sample documents.
-    applyArtworkPlacement(texture, project.artwork, viewMode);
+    // Registered to the authored UVs in both views (artworkTexture.ts).
+    applyArtworkPlacement(texture, project.artwork);
     return texture;
-  }, [frontArtworkTexture, project.artwork, viewMode]);
+  }, [frontArtworkTexture, project.artwork]);
   const placedBackArtworkTexture = useMemo(() => {
     const source = backArtworkTexture
       ?? frontArtworkTexture;
     if (!source) return null;
     const texture = configureArtworkTexture(source.clone());
-    applyArtworkPlacement(texture, project.artwork, viewMode);
+    applyArtworkPlacement(texture, project.artwork);
     return texture;
-  }, [backArtworkTexture, frontArtworkTexture, project.artwork, viewMode]);
+  }, [backArtworkTexture, frontArtworkTexture, project.artwork]);
   useEffect(
     () => () => {
       placedFrontArtworkTexture?.dispose();

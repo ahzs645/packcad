@@ -677,10 +677,12 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
 
   const frame = foldSceneFrame(model, projection);
   const [cx, cy, cz] = frame.center;
-  // Remap fold (x, y, z) -> scene (x, z_fold-as-height, y). The flat 2D view is
-  // seen top-down (-y), which flips one screen axis; negate the depth axis there so
-  // fold.y reads upright while keeping fold.x reading left-to-right.
-  const depthSign = projection === "flat-2d" ? -1 : 1;
+  // Remap fold (x, y, z) -> scene (x, z_fold-as-height, -y): fold.y reads upright
+  // from the top-down flat camera while fold.x reads left-to-right. Both views
+  // use this one remap, a rotation. The folded view once kept +y, which made it a
+  // reflection: every folded package was the mirror image of its sheet, with
+  // lettering reversed or, with the old texture mirror, print on the wrong panels.
+  const depthSign = -1;
   const remap = (p: readonly [number, number, number]): V3 => [
     (p[0] - cx) * frame.scale,
     (p[2] - cz) * frame.scale,
@@ -810,7 +812,13 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // from the FOLDED positions it flipped the whole shell differently per keyframe
   // (correct at Setup, mirrored at Keyframe 1), since the box's centroid/normals only
   // diverge once it folds up. Winding is the only fold-stable source of truth.
-  const flipAll = false;
+  //
+  // The print faces the flat view's camera (+Y, the sheet as printed), and the
+  // folds carry the panels away from it, so the print ends up outside. The
+  // source-coordinate winding below exposes FrontSide toward -Y; the folded view
+  // reverses it, a constant per projection, so it is fold-stable. (The flat view
+  // shows front artwork on both sides, so it keeps the source winding.)
+  const flipAll = projection === "folded-3d";
   const faceFlipped: boolean[] = model.facesVertices.map(() => flipAll);
 
   // The thickness must extrude BEHIND the surface the front material renders
@@ -1743,7 +1751,8 @@ export function updateFoldScenePositions(
     : timelineSolve.positions;
   const oriented = orientedFor(projection, foldPositions, model);
   const [cx, cy, cz] = frame.center;
-  const depthSign = projection === "flat-2d" ? -1 : 1;
+  // The same remap as buildFoldScene: a rotation, in both views.
+  const depthSign = -1;
   const scenePositions: V3[] = oriented.map((point) => [
     (point[0] - cx) * frame.scale,
     (point[2] - cz) * frame.scale,
