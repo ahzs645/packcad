@@ -802,10 +802,9 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // bends are separate geometry there; averaging adjacent normals here used to
   // amplify exposed corners by as much as 2.9×.
   const rawNormals = model.facesVertices.map((loop) => faceNormal(loop));
-  // Orientation comes straight from the FOLD model's globally-consistent winding,
-  // which is FOLD-INVARIANT: a rigid fold can't change which side of the sheet is the
-  // exterior. The flat 2D view renders the artwork correctly with no flip, so the
-  // folded 3D view must use the same (no flip) to agree at every fold angle.
+  // The printed side is fixed in flat source coordinates and remains the same
+  // throughout a rigid fold. The render triangles below establish that side
+  // consistently even when a source face loop has the opposite winding.
   //
   // Do NOT reintroduce a centroid-vs-folded-geometry flip: because it was computed
   // from the FOLDED positions it flipped the whole shell differently per keyframe
@@ -825,7 +824,18 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   // topological constant, so the playback update path reuses it via
   // positionLayout.faceNormalSigns.
   const faceTris = model.facesVertices.map((loop, faceIndex) => {
-    const rawTris = triangulateFace(loop, model.verticesCoords);
+    // The three-vertex fast path preserves loop order, while general polygon
+    // triangulation returns clockwise source triangles. Normalize only the
+    // render winding so both expose the same printed side after the [x,z,y]
+    // handedness change. Connectivity and the solver's face loops stay intact.
+    const rawTris = triangulateFace(loop, model.verticesCoords).map(([a, b, c]) => {
+      const pa = model.verticesCoords[a];
+      const pb = model.verticesCoords[b];
+      const pc = model.verticesCoords[c];
+      const area = (pb[0] - pa[0]) * (pc[1] - pa[1])
+        - (pb[1] - pa[1]) * (pc[0] - pa[0]);
+      return (area > 0 ? [a, c, b] : [a, b, c]) as [number, number, number];
+    });
     // Reverse winding when the face was flipped outward so FrontSide faces out.
     return faceFlipped[faceIndex]
       ? rawTris.map(([a, b, c]) => [a, c, b] as [number, number, number])
