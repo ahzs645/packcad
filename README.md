@@ -25,10 +25,25 @@ pnpm install
 pnpm typecheck
 pnpm test
 pnpm lint
+pnpm build
 ```
 
-The app intentionally has no production build script in this migration checkpoint. Validation
-uses strict TypeScript, Vitest, and ESLint, as requested.
+Validation uses strict TypeScript, Vitest, and ESLint. `pnpm build` also produces the Vite
+production bundle.
+
+## Reopenable PDF projects
+
+- **File → Export PDF Project…** exports the tiled dieline with the complete editable project
+  embedded in the PDF.
+- **File → Add project to PDF…** attaches the current project to an existing artwork PDF,
+  preserving its visible pages, and downloads a new `.packcad.pdf` file.
+- **File → Open Project…**, or dropping the PDF onto PackCAD, restores the embedded project,
+  including artwork, material settings, geometry, and folding stages.
+
+The PDF remains viewable and printable in ordinary PDF readers. Folding playback and editing
+run in PackCAD. Keep the original download: printing to a new PDF or removing attachments may
+discard its editable data. An ordinary PDF without project data cannot restore a fold model.
+See [PDF project format and workflows](docs/project-pdf.md) for details.
 
 ## Solver API shape
 

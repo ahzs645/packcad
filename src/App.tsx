@@ -34,10 +34,12 @@ import { Topbar, type OpenMenu } from "./components/Topbar";
 import { ViewportWorkspace } from "./components/ViewportWorkspace";
 import { foldModelToDrawing } from "./model/drawing";
 import { useFoldingPlayback } from "./model/foldingPlayback";
+import { projectFromUnknown } from "./model/projectImport";
 import {
-  projectFromFileText,
-  projectFromUnknown,
-} from "./model/projectImport";
+  PROJECT_FILE_ACCEPT,
+  pdfBytesFromFile,
+  projectFromFile,
+} from "./model/projectFileImport";
 import {
   createPackCadSampleProject,
   packCadSampleLibrary,
@@ -158,6 +160,7 @@ export default function App() {
   });
   const autosaveRef = useRef<ProjectAutosaveBinding | null>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const pdfProjectInputRef = useRef<HTMLInputElement>(null);
   const menuDielineInputRef = useRef<HTMLInputElement>(null);
   const projectDragDepthRef = useRef(0);
   const autoplayEditorRef = useRef<typeof initialEditor | null>(null);
@@ -442,10 +445,10 @@ export default function App() {
     setImportNotice(null);
     try {
       await autosaveRef.current?.flush();
-      const snapshot = projectFromFileText(await file.text());
+      const snapshot = await projectFromFile(file);
       const identity = {
         id: makeUid("doc"),
-        name: file.name.replace(/\.packcad(?:\.json)?$|\.json$/i, ""),
+        name: file.name.replace(/(?:\.packcad)?\.(?:json|pdf)$|\.packcad$/i, ""),
       };
       const nextEditor = createProjectEditor(snapshot, identity);
       await documentStore.save(identity.id, identity.name, nextEditor.content);
@@ -509,19 +512,12 @@ export default function App() {
       setImportNotice({
         kind: "error",
         message: files.length === 0
-          ? "Drop a PackCAD JSON project file."
+          ? "Drop a PackCAD PDF or JSON project."
           : "Drop one PackCAD project at a time.",
       });
       return;
     }
     const [file] = files;
-    if (!file.name.toLowerCase().endsWith(".json")) {
-      setImportNotice({
-        kind: "error",
-        message: `Could not open ${file.name}: expected a JSON project file.`,
-      });
-      return;
-    }
     void openProjectFile(file);
   }, [openProjectFile]);
 
@@ -531,8 +527,35 @@ export default function App() {
       JSON.stringify(editor.content, null, 2),
       "application/json",
     );
-    setNotice("Saved project document");
+    setNotice("Saved JSON project");
   }, [editor.content]);
+
+  const addProjectToPdf = useCallback(async (file: File): Promise<void> => {
+    setImportNotice(null);
+    const snapshot = editor.content;
+    try {
+      const pageBytes = await pdfBytesFromFile(file);
+      const { embedProjectInPdf } = await import("./model/projectPdf");
+      const bytes = Uint8Array.from(await embedProjectInPdf(pageBytes, snapshot));
+      const name = file.name.replace(/(?:\.packcad)?\.pdf$/i, "") || "project";
+      downloadBlob(
+        `${name}.packcad.pdf`,
+        new Blob([bytes], { type: "application/pdf" }),
+      );
+      setNotice("Added project to PDF");
+      setImportNotice({
+        kind: "success",
+        message: `Added current project to ${file.name}.`,
+      });
+    } catch (error) {
+      setImportNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? `Could not add project to ${file.name}: ${error.message}`
+          : `Could not add project to ${file.name}.`,
+      });
+    }
+  }, [editor]);
 
   const copyProjectUrl = useCallback(async (): Promise<void> => {
     const params = new URLSearchParams();
@@ -550,7 +573,8 @@ export default function App() {
   const exportProject = useCallback(async (
     format: "svg" | "gltf" | "dxf" | "hpgl" | "pdf" | "png",
   ): Promise<void> => {
-    const model = state.content.foldModel;
+    const snapshot = editor.content;
+    const model = snapshot.foldModel;
     if (!model) {
       setNotice("Import a fold model before exporting");
       return;
@@ -579,6 +603,28 @@ export default function App() {
       setNotice("Exported 3D model");
       return;
     }
+    if (format === "pdf") {
+      setImportNotice(null);
+      try {
+        const drawing = foldModelToDrawing(model);
+        const pageBytes = toTiledPDF(drawing);
+        const { embedProjectInPdf } = await import("./model/projectPdf");
+        const bytes = Uint8Array.from(await embedProjectInPdf(pageBytes, snapshot));
+        downloadBlob(
+          "packcad-project.pdf",
+          new Blob([bytes], { type: "application/pdf" }),
+        );
+        setNotice("Exported PDF project");
+      } catch (error) {
+        setImportNotice({
+          kind: "error",
+          message: error instanceof Error
+            ? `Could not export PDF project: ${error.message}`
+            : "Could not export PDF project.",
+        });
+      }
+      return;
+    }
     const drawing = foldModelToDrawing(model);
     if (format === "svg") {
       downloadText("packcad-dieline.svg", toSVG(drawing), "image/svg+xml");
@@ -589,19 +635,12 @@ export default function App() {
     if (format === "hpgl") {
       downloadText("packcad-dieline.hpgl", toHPGL(drawing));
     }
-    if (format === "pdf") {
-      const bytes = Uint8Array.from(toTiledPDF(drawing));
-      downloadBlob(
-        "packcad-dieline-tiled.pdf",
-        new Blob([bytes], { type: "application/pdf" }),
-      );
-    }
     if (format === "png") {
       const blob = await toPNG(drawing);
       if (blob) downloadBlob("packcad-dieline.png", blob);
     }
     setNotice(`Exported ${format.toUpperCase()}`);
-  }, [sceneObject, state.content.foldModel]);
+  }, [editor, sceneObject]);
 
   useEffect(() => {
     let cancelled = false;
@@ -858,7 +897,7 @@ export default function App() {
             <div className="project-drop-card">
               <Icon name="file-up" size={32} />
               <strong>Drop to open in PackCAD</strong>
-              <span>PackCAD JSON project</span>
+              <span>PackCAD PDF or JSON project</span>
             </div>
           </div>
         ) : null}
@@ -887,6 +926,7 @@ export default function App() {
             setNotice("Opened sample library");
           }}
           onOpenProject={() => projectInputRef.current?.click()}
+          onAddProjectToPdf={() => pdfProjectInputRef.current?.click()}
           onImportDieline={() => menuDielineInputRef.current?.click()}
           onSaveProject={saveProjectFile}
           onSaveDraft={() => void saveAs()}
@@ -917,11 +957,24 @@ export default function App() {
           ref={projectInputRef}
           className="hidden-file"
           type="file"
-          accept=".json,.packcad.json"
+          accept={PROJECT_FILE_ACCEPT}
+          aria-label="Open a PackCAD PDF or JSON project"
           onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = "";
             if (file) void openProjectFile(file);
+          }}
+        />
+        <input
+          ref={pdfProjectInputRef}
+          className="hidden-file"
+          type="file"
+          accept=".pdf,application/pdf"
+          aria-label="Add the current project to a PDF"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void addProjectToPdf(file);
           }}
         />
         <input

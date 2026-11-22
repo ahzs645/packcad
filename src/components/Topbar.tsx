@@ -29,6 +29,7 @@ interface TopbarProps {
   onNewProject: () => void;
   onOpenSampleLibrary: () => void;
   onOpenProject: () => void;
+  onAddProjectToPdf: () => void;
   onImportDieline: () => void;
   onSaveProject: () => void;
   onSaveDraft: () => void;
@@ -58,6 +59,7 @@ export function Topbar({
   onNewProject,
   onOpenSampleLibrary,
   onOpenProject,
+  onAddProjectToPdf,
   onImportDieline,
   onSaveProject,
   onSaveDraft,
@@ -124,7 +126,12 @@ export function Topbar({
                 <Icon name="box" size={15} />
                 Sample Library...
               </button>
-              <button type="button" role="menuitem" onClick={() => choose(onOpenProject)}>
+              <button
+                type="button"
+                role="menuitem"
+                title="Open a PackCAD PDF or JSON project"
+                onClick={() => choose(onOpenProject)}
+              >
                 <Icon name="upload" size={15} />
                 Open Project...
               </button>
@@ -134,7 +141,7 @@ export function Topbar({
               </button>
               <button type="button" role="menuitem" onClick={() => choose(onSaveProject)}>
                 <Icon name="save" size={15} />
-                Save Project <kbd>⌘S</kbd>
+                Save Project JSON <kbd>⌘S</kbd>
               </button>
               <button type="button" role="menuitem" onClick={() => choose(onSaveDraft)}>
                 <Icon name="save" size={15} />
@@ -180,9 +187,16 @@ export function Topbar({
                   key={format}
                   onClick={() => choose(() => onExport(format))}
                 >
-                  Export {format.toUpperCase()}...
+                  {format === "pdf" ? "Export PDF Project..." : `Export ${format.toUpperCase()}...`}
                 </button>
               ))}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => choose(onAddProjectToPdf)}
+              >
+                Add project to PDF...
+              </button>
             </div>
           ) : null}
         </div>

@@ -851,6 +851,8 @@ footer a {
 
 .file-menu {
   min-width: 250px;
+  max-height: min(70vh, 680px);
+  overflow-y: auto;
 }
 
 .menu-label {

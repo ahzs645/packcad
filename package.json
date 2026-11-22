@@ -27,6 +27,7 @@
     "@atelier/sim": "link:../atelier/packages/sim",
     "@packcad/fold-solver": "workspace:*",
     "@packcad/format": "workspace:*",
+    "pdf-lib": "1.17.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "three": "0.181.2"
