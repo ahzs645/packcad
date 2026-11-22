@@ -995,13 +995,13 @@ export function ViewportPane({
     );
     const selectedLine = createFatEdges(selectedEdgeSource, viewport, {
       color: viewMode === "2d" ? "#155dfc" : SELECTED_EDGE_COLOR,
-      linewidth: viewMode === "2d" ? 7 : 2.2,
+      linewidth: viewMode === "2d" ? (compact ? 2.5 : 7) : 2.2,
       depthTest: false,
       renderOrder: 19,
     });
     const hoverLine = createFatEdges(hoverEdgeSource, viewport, {
       color: viewMode === "2d" ? "#2b7fff" : HOVER_EDGE_COLOR,
-      linewidth: viewMode === "2d" ? 10 : 2,
+      linewidth: viewMode === "2d" ? (compact ? 3 : 10) : 2,
       depthTest: false,
       renderOrder: 20,
     });
