@@ -84,6 +84,9 @@ export type FoldModel = {
   rigidTimeline?: boolean;
   /** Faces whose completed pose lies behind the package's exterior shell. */
   interiorFaceIndices?: number[];
+  /** Display-only slab shifts in stock-thickness multiples along each rendered
+   * front normal. Null entries retain the default/legacy layering behavior. */
+  faceSurfaceLayers?: Array<number | null>;
 };
 
 function vector3Or(value: unknown, fallback: [number, number, number]): [number, number, number] {
@@ -314,6 +317,10 @@ export function buildFoldModel(design: PackCadDesign): FoldModel | null {
           rotationDegrees: design.modifiers.OPERATION_THICKNESS.materialRotationDegrees ?? 0,
         }
       : null,
+    ...(design.modifiers.OPERATION_THICKNESS?.faceSurfaceLayers ? {
+      faceSurfaceLayers: facesAdded.map((uuid) =>
+        design.modifiers.OPERATION_THICKNESS!.faceSurfaceLayers![uuid] ?? null),
+    } : {}),
   });
 }
 

@@ -48,6 +48,8 @@ export type ArtworkPlacement = {
   y: number;
   scale: number;
   rotation: number;
+  /** Preserve authored FOLD UVs in both views; omitted keeps legacy mirroring. */
+  uvConvention?: "source-atlas";
   /**
    * Uploaded artwork is stored with the project rather than as an object URL so
    * undo/redo, IndexedDB drafts, and reopened sessions all see the same image.
