@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:viewer": "PACKCAD_ENTRY=viewer vite build",
     "preview": "vite preview",
     "patch:reference": "node scripts/patch-reference-mirror.mjs",
     "check:reference-patch": "node scripts/patch-reference-mirror.mjs --check",
