@@ -87,6 +87,110 @@ function foldbackModel(): FoldModel {
   };
 }
 
+function hingedPanelModel(triangular: boolean, reversed: boolean): FoldModel {
+  const verticesCoords = [[0, 0], [10, 0], [10, 10], [0, 10],
+    ...(triangular ? [[20, 5]] : [[20, 0], [20, 10]])];
+  const facesVertices = [[0, 1, 2, 3], triangular ? [1, 4, 2] : [1, 4, 5, 2]]
+    .map((loop) => reversed ? [...loop].reverse() : loop);
+  const edgesVertices: [number, number][] = [];
+  const edgeFaces: number[][] = [];
+  const facesEdges = facesVertices.map((loop, face) => loop.map((a, index) => {
+    const b = loop[(index + 1) % loop.length];
+    let edge = edgesVertices.findIndex(([u, v]) => (u === a && v === b) || (u === b && v === a));
+    if (edge < 0) {
+      edge = edgesVertices.length;
+      edgesVertices.push([a, b]);
+      edgeFaces.push([]);
+    }
+    edgeFaces[edge].push(face);
+    return edge;
+  }));
+  const hinge = edgeFaces.findIndex((faces) => faces.length === 2);
+  return {
+    ...foldbackModel(),
+    verticesCoords,
+    verticesIDs: verticesCoords.map((_, i) => `v${i}`),
+    facesIDs: ["body", "inside-tab"],
+    facesVertices, facesEdges, edgesVertices, edgeFaces,
+    edgesAssignment: edgeFaces.map((faces) => faces.length === 2 ? "V" : "B"),
+    faceSurfaceLayers: [null, -1.05],
+    keyframes: [{
+      id: "fold", label: "Turn tab inside", creaseAnglesDeg: { [hinge]: 90 },
+      creaseEdgeGroup: { [hinge]: 0 }, fixedFaceIndices: [0], fixedVertexIndices: [],
+      enforcePriorConstraints: false,
+    }],
+  };
+}
+
+describe("triangle and polygon render winding", () => {
+  it.each([
+    { triangular: true, reversed: false },
+    { triangular: true, reversed: true },
+    { triangular: false, reversed: false },
+    { triangular: false, reversed: true },
+  ])("keeps print and inside skins consistent for $triangular triangular / $reversed reversed loops", ({ triangular, reversed }) => {
+    const model = hingedPanelModel(triangular, reversed);
+    const originalLoops = structuredClone(model.facesVertices);
+    const originalVertices = structuredClone(model.verticesCoords);
+    const common = {
+      model, thicknessMm: 0.1, panelColorMode: "artwork" as const,
+      edgeColorMode: "mountain-valley" as const,
+    };
+    for (const projection of ["flat-2d", "folded-3d"] as const) {
+      const flat = buildFoldScene({ ...common, projection, foldStepIndex: 0, foldAngle: 0 });
+      const expectedY = projection === "flat-2d" ? -1 : 1;
+      expect(frontTrianglePointAndNormal(flat, 0).normal[1]).toBeCloseTo(expectedY, 8);
+      expect(frontTrianglePointAndNormal(flat, 1).normal[1]).toBeCloseTo(expectedY, 8);
+      disposeScene(flat);
+    }
+
+    const input = { ...common, projection: "folded-3d" as const, foldStepIndex: 1, foldAngle: 0 };
+    const scene = buildFoldScene(input);
+    for (const foldAngle of [0, 22.5, 45, 67.5, 90]) {
+      updateFoldScenePositions(scene, { foldStepIndex: 1, foldAngle });
+      const fresh = buildFoldScene({ ...input, foldAngle });
+      for (const key of ["geometry", "solidEdgeGeometry", "interiorEdgeGeometry", "dashedEdgeGeometry"] as const) {
+        const actual = scene[key].getAttribute("position").array;
+        const expected = fresh[key].getAttribute("position").array;
+        expect(actual.length).toBe(expected.length);
+        expect(Array.from(actual).reduce((maximum, value, index) =>
+          Math.max(maximum, Math.abs(value - expected[index])), 0)).toBeLessThan(1e-6);
+      }
+      disposeScene(fresh);
+    }
+
+    // A fixed counterclockwise source triangle determines the printed side
+    // independently of both input loop winding and render triangulation.
+    const ids = triangular ? [1, 4, 2] : [1, 4, 5];
+    const [a, b, c] = ids.map((vertex) => scene.timelineSolve.positions[vertex]);
+    const ab = b.map((value, axis) => value - a[axis]);
+    const ac = c.map((value, axis) => value - a[axis]);
+    const foldNormal = [ab[1] * ac[2] - ab[2] * ac[1],
+      ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+    const length = Math.hypot(...foldNormal);
+    const printedNormal = [foldNormal[0], foldNormal[2], foldNormal[1]].map((value) => value / length);
+    const renderedNormal = frontTrianglePointAndNormal(scene, 1).normal;
+    expect(renderedNormal.reduce((sum, value, axis) => sum + value * printedNormal[axis], 0)).toBeCloseTo(1, 7);
+
+    const positions = scene.geometry.getAttribute("position") as BufferAttribute;
+    const rootFront = scene.positionLayout.meshRecipes.findIndex((recipe) =>
+      recipe.kind === "face" && recipe.faceIndex === 0 && recipe.vertexIndex === 1 && recipe.normalOffset === 0);
+    expect(rootFront).toBeGreaterThanOrEqual(0);
+    const rootPoint = [positions.getX(rootFront), positions.getY(rootFront), positions.getZ(rootFront)];
+    const offsets = scene.positionLayout.meshRecipes.flatMap((recipe, index) => {
+      if (recipe.kind !== "face" || recipe.faceIndex !== 1 || recipe.vertexIndex !== 1) return [];
+      return [[positions.getX(index), positions.getY(index), positions.getZ(index)].reduce(
+        (sum, value, axis) => sum + (value - rootPoint[axis]) * printedNormal[axis], 0)];
+    });
+    expect(offsets).toHaveLength(2);
+    expect(Math.min(...offsets)).toBeCloseTo(-2.05 * scene.meta.visualThickness, 6);
+    expect(Math.max(...offsets)).toBeCloseTo(-1.05 * scene.meta.visualThickness, 6);
+    expect(model.facesVertices).toEqual(originalLoops);
+    expect(model.verticesCoords).toEqual(originalVertices);
+    disposeScene(scene);
+  });
+});
+
 describe("fold scene frame updates", () => {
   it("keeps a 180-degree foldback's entire rendered slab behind the exterior sheet", () => {
     const model = foldbackModel();
