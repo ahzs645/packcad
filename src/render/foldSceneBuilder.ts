@@ -629,6 +629,44 @@ export function foldSceneFrame(model: FoldModel, projection: FoldProjection = "f
   };
 }
 
+// Remap fold (x, y, z) -> scene (x, z_fold-as-height, -y): fold.y reads upright
+// from the top-down flat camera while fold.x reads left-to-right. Both views
+// use this one remap, a rotation. The folded view once kept +y, which made it a
+// reflection: every folded package was the mirror image of its sheet, with
+// lettering reversed or, with the old texture mirror, print on the wrong panels.
+function sceneRemap(frame: ReturnType<typeof foldSceneFrame>): (p: readonly [number, number, number]) => V3 {
+  const [cx, cy, cz] = frame.center;
+  const depthSign = -1;
+  return (p) => [
+    (p[0] - cx) * frame.scale,
+    (p[2] - cz) * frame.scale,
+    (p[1] - cy) * frame.scale * depthSign,
+  ];
+}
+
+/**
+ * Solved fold positions where the folded 3D scene puts them: oriented by the
+ * model's transforms, centred and scaled as buildFoldScene places its vertices,
+ * and (unless `grounded` is false) stood on the ground, lowest point at y = 0,
+ * as the mesh is each frame; board thickness aside. For anything that has to
+ * know where a panel is on screen, such as a camera that follows the folding.
+ * Ungrounded positions are the ones to compare across a stage: grounding moves
+ * the whole package whenever its lowest point changes.
+ */
+export function foldScenePositions(
+  model: FoldModel,
+  positions: readonly V3[],
+  { grounded = true }: { grounded?: boolean } = {},
+): V3[] {
+  const frame = foldSceneFrame(model, "folded-3d");
+  const scene = applyTransforms(positions as V3[], model.transforms).map(sceneRemap(frame));
+  if (!grounded) return scene;
+  let ground = Infinity;
+  for (const point of scene) ground = Math.min(ground, point[1]);
+  if (!Number.isFinite(ground)) return scene;
+  return scene.map(([x, y, z]) => [x, y - ground, z]);
+}
+
 /** Scene-space width/height of the flat dieline (top-down xz plane), for ortho fit. */
 export function flatSceneBounds(model: FoldModel): { width: number; height: number } {
   const frame = foldSceneFrame(model, "flat-2d");
@@ -676,19 +714,7 @@ export function buildFoldScene(input: FoldSceneInput): FoldSceneData {
   const oriented = orientedFor(projection, foldPositions, model);
 
   const frame = foldSceneFrame(model, projection);
-  const [cx, cy, cz] = frame.center;
-  // Remap fold (x, y, z) -> scene (x, z_fold-as-height, -y): fold.y reads upright
-  // from the top-down flat camera while fold.x reads left-to-right. Both views
-  // use this one remap, a rotation. The folded view once kept +y, which made it a
-  // reflection: every folded package was the mirror image of its sheet, with
-  // lettering reversed or, with the old texture mirror, print on the wrong panels.
-  const depthSign = -1;
-  const remap = (p: readonly [number, number, number]): V3 => [
-    (p[0] - cx) * frame.scale,
-    (p[2] - cz) * frame.scale,
-    (p[1] - cy) * frame.scale * depthSign,
-  ];
-  const scenePositions = oriented.map(remap);
+  const scenePositions = oriented.map(sceneRemap(frame));
 
   const direction = input.thicknessOffsetDirection
     ?? ((model.thickness?.direction ?? "THICKNESS_OFFSET_DIRECTION_BOTH") as ThicknessOffsetDirection);

@@ -41,9 +41,12 @@ export type FoldingPlayback = {
   seek: (stepId: string) => void;
 };
 
-export function useFoldingPlayback(project: PackagingProject): FoldingPlayback {
+export function useFoldingPlayback(
+  project: PackagingProject,
+  { speed = 1 }: { speed?: number } = {},
+): FoldingPlayback {
   const [player, setPlayer] = useState<FoldingPlayerState>(() =>
-    createFoldingPlayer(project));
+    createFoldingPlayer(project, { speed }));
   const playerRef = useRef(player);
   const projectRef = useRef(project);
   const foldInputsRef = useRef({
@@ -68,8 +71,8 @@ export function useFoldingPlayback(project: PackagingProject): FoldingPlayback {
       steps: project.foldingSteps,
       activeStepId: project.activeStepId,
     };
-    if (changed) replacePlayer(createFoldingPlayer(project));
-  }, [project, replacePlayer]);
+    if (changed) replacePlayer(createFoldingPlayer(project, { speed }));
+  }, [project, replacePlayer, speed]);
 
   useEffect(() => {
     if (!player.playing) return;
@@ -107,8 +110,8 @@ export function useFoldingPlayback(project: PackagingProject): FoldingPlayback {
     replacePlayer(createFoldingPlayer({
       ...projectRef.current,
       activeStepId: stepId,
-    }));
-  }, [replacePlayer]);
+    }, { speed }));
+  }, [replacePlayer, speed]);
   const frame = getFoldingPlayerFrame(project, player);
 
   return {

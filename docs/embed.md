@@ -29,10 +29,28 @@ unchanged.
 | `controls`   | `0` hides the transport, for a host that draws its own                | `1`     |
 | `background` | Viewport background as a hex colour (`f4f4f5` or `#f4f4f5`)           | theme   |
 | `theme`      | `light` or `dark`: the toolbar, inset, labels and transport           | `light` |
+| `speed`      | Playback speed: `1` is the editor's pace, `0.5` half as fast (0.1–8)  | `1`     |
+| `camera`     | `follow` turns to each stage's moving panels; `fixed` stays put        | `follow` |
 
 ```html
 <iframe src="packcad/viewer.html?project=../models/bus.packcad.pdf&autoplay=1"></iframe>
 ```
+
+## The camera
+
+With `camera=follow`, the viewer plans a shot for each folding stage before anything plays
+(`src/viewer/foldCamera.ts`). A rigid timeline is solved at each stage's start, middle and end;
+the panels that move are that stage's, and the shot keeps the whole package in frame across the
+stage, aims a little toward those panels, and looks from the side they end up on — from below for
+a floor closing underneath, from the rear for a rear profile. Each stage begins with a short eased
+turn to its shot, and when the folding ends the camera comes back round to the view it started
+from. Choosing a stage while paused turns to that stage's shot too. Orbiting or zooming during
+playback hands the camera to the viewer until the next play. A model folded by the iterative
+solver has no plan, and keeps the editor's behaviour: the camera stays put and frames the result
+once it stops.
+
+Turning takes up to 0.7 s, or 60% of a stage, so a slower `speed` (such as `0.5`) gives each
+stage time to be seen after the camera arrives.
 
 ## Messages
 

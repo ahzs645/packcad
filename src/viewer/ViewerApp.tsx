@@ -22,11 +22,13 @@ import {
   type ViewLayout,
 } from "../model/uiPreferences";
 import { useFoldSettlement } from "../render/useFoldSettlement";
+import { useFoldCamera } from "./useFoldCamera";
 import {
   DEFAULT_BACKGROUND,
   layoutFor,
   parseViewerCommand,
   resolveStepId,
+  type ViewerCamera,
   type ViewerEvent,
   type ViewerOptions,
   type ViewerTheme,
@@ -108,6 +110,8 @@ export function ViewerApp({ options }: { options: ViewerOptions }) {
       background={ground}
       controls={options.controls}
       loop={options.loop}
+      speed={options.speed}
+      camera={options.camera}
     />
   );
 }
@@ -119,6 +123,8 @@ function LoadedViewer({
   background,
   controls,
   loop,
+  speed,
+  camera,
 }: {
   loaded: Loaded;
   layout: ViewLayout;
@@ -126,16 +132,18 @@ function LoadedViewer({
   background: string;
   controls: boolean;
   loop: boolean;
+  speed: number;
+  camera: ViewerCamera;
 }) {
   const [project, setProject] = useState<PackagingProject>(() => ({
     ...loaded.project,
     activeStepId: resolveStepId(loaded.project.foldingSteps, loaded.step, loaded.project.activeStepId),
   }));
-  const playback = useFoldingPlayback(project);
+  const playback = useFoldingPlayback(project, { speed });
   const settlement = useFoldSettlement(playback.displayedProject, playback.player);
   const [fitNonce, setFitNonce] = useState(0);
   const [, setSceneObject] = useState<Object3D | null>(null);
-  const [, setViewport] = useState<Viewport | null>(null);
+  const [viewport, setViewport] = useState<Viewport | null>(null);
   const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null);
   const [selectedFoldEdgeIndex, setSelectedFoldEdgeIndex] = useState<number | null>(null);
   const [hoveredFoldEdgeIndex, setHoveredFoldEdgeIndex] = useState<number | null>(null);
@@ -150,6 +158,14 @@ function LoadedViewer({
   }), [background, helpers, layout, project]);
 
   const steps = project.foldingSteps;
+  // The flat sheet (2D) never moves its camera; the 3D pane follows the folding when asked to.
+  useFoldCamera({
+    viewport,
+    model: project.foldModel,
+    steps,
+    player: playback.player,
+    enabled: camera === "follow" && layout !== "single-2d",
+  });
   const { play, pause, seek } = playback;
   const seekTo = useCallback((request: string | number): void => {
     seek(resolveStepId(steps, request, steps[steps.length - 1]?.id ?? ""));

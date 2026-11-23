@@ -5,7 +5,7 @@ const steps = [{ id: "setup" }, { id: "a" }, { id: "b" }];
 
 describe("viewer options", () => {
   it("reads the project and how to show it from the address", () => {
-    expect(readViewerOptions("?project=bus.packcad.pdf&step=2&autoplay=1&layout=split&controls=0&background=fafafa&loop=yes&theme=dark"))
+    expect(readViewerOptions("?project=bus.packcad.pdf&step=2&autoplay=1&layout=split&controls=0&background=fafafa&loop=yes&theme=dark&speed=0.5&camera=fixed"))
       .toEqual({
         projectUrl: "bus.packcad.pdf",
         step: "2",
@@ -15,15 +15,25 @@ describe("viewer options", () => {
         background: "#fafafa",
         loop: true,
         theme: "dark",
+        speed: 0.5,
+        camera: "fixed",
       });
   });
 
   it("defaults to the finished model in 3D with controls", () => {
     expect(readViewerOptions("")).toMatchObject({
       projectUrl: null, step: "final", autoplay: false, layout: "single-3d", controls: true, background: null, loop: false,
-      theme: "light",
+      theme: "light", speed: 1, camera: "follow",
     });
     expect(readViewerOptions("?theme=sepia").theme).toBe("light");
+  });
+
+  it("plays at a speed the player accepts, and follows the folding unless told not to", () => {
+    expect(readViewerOptions("?speed=0").speed).toBe(1);
+    expect(readViewerOptions("?speed=fast").speed).toBe(1);
+    expect(readViewerOptions("?speed=0.01").speed).toBe(0.1);
+    expect(readViewerOptions("?speed=20").speed).toBe(8);
+    expect(readViewerOptions("?camera=orbit").camera).toBe("follow");
   });
 
   it("refuses a background that is not a hex colour", () => {

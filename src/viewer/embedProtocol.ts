@@ -24,7 +24,16 @@ export type ViewerOptions = {
   loop: boolean;
   /** The viewer's own chrome (toolbar, inset, labels, transport), to match the host page. */
   theme: ViewerTheme;
+  /** How fast the folding plays: 1 is the editor's pace, 0.5 half as fast. */
+  speed: number;
+  /**
+   * "follow": while the folding plays, the camera turns to each stage's moving panels and comes
+   * back round to the finished model. "fixed": it stays where it is, as in the editor.
+   */
+  camera: ViewerCamera;
 };
+
+export type ViewerCamera = "follow" | "fixed";
 
 export type ViewerTheme = "light" | "dark";
 
@@ -53,6 +62,12 @@ const colour = (value: string | null): string | null =>
     ? (value.startsWith("#") ? value : `#${value}`)
     : null;
 
+/** A playback speed the player accepts (it clamps to 0.1–8), 1 for anything else. */
+const speed = (value: string | null): number => {
+  const number = value === null ? NaN : Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.min(8, Math.max(0.1, number)) : 1;
+};
+
 export function readViewerOptions(search: string): ViewerOptions {
   const params = new URLSearchParams(search);
   return {
@@ -64,6 +79,8 @@ export function readViewerOptions(search: string): ViewerOptions {
     background: colour(params.get("background")),
     loop: flag(params.get("loop"), false),
     theme: theme(params.get("theme")) ?? "light",
+    speed: speed(params.get("speed")),
+    camera: params.get("camera") === "fixed" ? "fixed" : "follow",
   };
 }
 
