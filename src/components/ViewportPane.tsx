@@ -119,6 +119,12 @@ interface ViewportPaneProps {
   onHoverFoldEdge: (edgeIndex: number | null) => void;
   onSceneObject?: (object: Object3D | null) => void;
   onViewport?: (viewport: Viewport | null) => void;
+  /**
+   * Called once the package is on screen as it will be seen: built, with its board texture and
+   * printed artwork loaded, and a frame drawn. Until then the pane may be blank, or show bare
+   * board where the print will be.
+   */
+  onDrawn?: () => void;
   panelColorMode?: PanelColorMode;
   edgeColorMode?: EdgeColorMode;
   showGroundPlane?: boolean;
@@ -318,6 +324,7 @@ export function ViewportPane({
   onHoverFoldEdge,
   onSceneObject,
   onViewport,
+  onDrawn,
   panelColorMode = "artwork",
   edgeColorMode = "mountain-valley",
   showGroundPlane = project.showHelpers,
@@ -528,6 +535,36 @@ export function ViewportPane({
       texture.dispose();
     };
   }, [artworkSources.back, viewport]);
+
+  // Tell the owner once the package is drawn with its textures: the scene is built in an effect
+  // and each texture arrives on its own, so wait for all of them, then for a painted frame.
+  const onDrawnRef = useRef(onDrawn);
+  onDrawnRef.current = onDrawn;
+  const drawnRef = useRef(false);
+  const artworkPending = (Boolean(artworkSources.front) && !frontArtworkTexture)
+    || (Boolean(artworkSources.back) && !backArtworkTexture);
+  useEffect(() => {
+    if (drawnRef.current || !viewport || !faceMaterialTexture || artworkPending) return undefined;
+    const view = viewport.renderer.domElement.ownerDocument.defaultView ?? window;
+    let frame = 0;
+    const settle = (framesLeft: number): void => {
+      frame = view.requestAnimationFrame(() => {
+        if (!sceneObjectRef.current) {
+          settle(2);
+          return;
+        }
+        viewport.invalidate();
+        if (framesLeft > 0) {
+          settle(framesLeft - 1);
+          return;
+        }
+        drawnRef.current = true;
+        onDrawnRef.current?.();
+      });
+    };
+    settle(2);
+    return () => view.cancelAnimationFrame(frame);
+  }, [artworkPending, faceMaterialTexture, viewport]);
 
   const placedFrontArtworkTexture = useMemo(() => {
     const source = frontArtworkTexture;

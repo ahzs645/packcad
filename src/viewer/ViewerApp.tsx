@@ -36,6 +36,8 @@ import {
 
 /** How long a looping display holds the finished model before folding it again. */
 const LOOP_HOLD_MS = 2500;
+/** Announce the project anyway if its print has not loaded by then (a texture that fails). */
+const DRAWN_TIMEOUT_MS = 4000;
 /** At most this often, playback progress is reported to the host. */
 const STATE_INTERVAL_MS = 100;
 
@@ -135,9 +137,15 @@ function LoadedViewer({
   speed: number;
   camera: ViewerCamera;
 }) {
+  // A project that will fold at once opens on its flat sheet, so what is drawn first is where the
+  // folding starts, framed for it, rather than the finished model the folding then replaces.
   const [project, setProject] = useState<PackagingProject>(() => ({
     ...loaded.project,
-    activeStepId: resolveStepId(loaded.project.foldingSteps, loaded.step, loaded.project.activeStepId),
+    activeStepId: resolveStepId(
+      loaded.project.foldingSteps,
+      loaded.autoplay ? "setup" : loaded.step,
+      loaded.project.activeStepId,
+    ),
   }));
   const playback = useFoldingPlayback(project, { speed });
   const settlement = useFoldSettlement(playback.displayedProject, playback.player);
@@ -171,8 +179,19 @@ function LoadedViewer({
     seek(resolveStepId(steps, request, steps[steps.length - 1]?.id ?? ""));
   }, [seek, steps]);
 
-  // Announce the project once, then play it if asked.
+  // Announce the project once it is drawn with its print, then play it if asked: before that the
+  // viewport is blank or bare board, and a host showing its own loading state would uncover that,
+  // and the folding would start out of sight.
+  const [drawn, setDrawn] = useState(false);
+  const markDrawn = useCallback(() => setDrawn(true), []);
   useEffect(() => {
+    const timer = window.setTimeout(markDrawn, DRAWN_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [markDrawn]);
+  const announced = useRef(false);
+  useEffect(() => {
+    if (!drawn || announced.current) return;
+    announced.current = true;
     post({
       type: "packcad:ready",
       name: project.design?.name ?? null,
@@ -180,8 +199,8 @@ function LoadedViewer({
       panels: project.foldModel?.facesVertices.length ?? 0,
     });
     if (loaded.autoplay) play();
-    // Only on first mount: a later edit to the shading or camera is not a new project.
-  }, []);
+    // Only once: a later edit to the shading or camera is not a new project.
+  }, [drawn, loaded.autoplay, play, project, steps]);
 
   // Playback commands from the host.
   useEffect(() => {
@@ -251,6 +270,7 @@ function LoadedViewer({
         onHoverFoldEdge={setHoveredFoldEdgeIndex}
         onSceneObject={setSceneObject}
         onViewport={setViewport}
+        onDrawn={markDrawn}
         onSetViewLayout={onLayout}
         onFit={() => setFitNonce((n) => n + 1)}
         onToggleGridAxes={() => setHelpers((shown) => !shown)}

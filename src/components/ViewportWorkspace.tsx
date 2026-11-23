@@ -23,6 +23,8 @@ interface ViewportWorkspaceProps {
   onHoverFoldEdge: (edgeIndex: number | null) => void;
   onSceneObject: (object: Object3D | null) => void;
   onViewport: (viewport: Viewport | null) => void;
+  /** Once the tracked pane shows the package with its print (ViewportPane's onDrawn). */
+  onDrawn?: () => void;
   onSetViewLayout: (layout: ViewLayout) => void;
   onFit: () => void;
   onToggleGridAxes: () => void;
@@ -45,6 +47,7 @@ export function ViewportWorkspace({
   onHoverFoldEdge,
   onSceneObject,
   onViewport,
+  onDrawn,
   onSetViewLayout,
   onFit,
   onToggleGridAxes,
@@ -86,6 +89,7 @@ export function ViewportWorkspace({
       onHoverFoldEdge={onHoverFoldEdge}
       onSceneObject={options.trackScene ? onSceneObject : undefined}
       onViewport={options.trackScene ? onViewport : undefined}
+      onDrawn={options.trackScene ? onDrawn : undefined}
       panelColorMode={preferences.panelColorMode}
       edgeColorMode={preferences.edgeColorMode}
       showGroundPlane={preferences.groundPlane}

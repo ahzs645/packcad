@@ -69,7 +69,11 @@ frame changes without reloading.
 
 The viewer posts to its parent:
 
-- `packcad:ready` — `{ name, steps: [{ id, label, angle }], panels }` once a project opens.
+- `packcad:ready` — `{ name, steps: [{ id, label, angle }], panels }` once a project is drawn:
+  built, with its board and printed artwork loaded (or after 4 s, if a texture never arrives).
+  Until then the frame may be blank or show bare board, so a host with its own loading state
+  can keep the frame hidden until this arrives. With `autoplay`, the project opens on its flat
+  sheet and starts folding at this moment.
 - `packcad:state` — `{ playing, stepId, stepIndex, progress }` on every stage or play change,
   and at most every 100 ms while playing.
 - `packcad:error` — `{ message }` when a project cannot be fetched or read.
